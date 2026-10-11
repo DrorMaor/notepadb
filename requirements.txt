@@ -1,0 +1,9 @@
+# SQL Server support (built in now)
+pyodbc>=5.0
+
+# Results grid (per-cell coloring, e.g. gray NULLs)
+tksheet>=7.6
+
+# Uncomment these when Postgres / MySQL backends get implemented in db_backends.py
+# psycopg2-binary>=2.9
+# mysql-connector-python>=8.0
