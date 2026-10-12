@@ -95,7 +95,7 @@ def get_suggestions(full_text: str, cursor_index: int, schema: dict):
                 (k for k in schema if k.split(".")[-1].lower() == _strip_brackets(alias_part).lower()),
                 None,
             )
-        cols = schema.get(table_key, []) if table_key else []
+        cols = [c[0] for c in schema.get(table_key, [])] if table_key else []
         suggestions = _rank(cols, col_prefix) if col_prefix else sorted(cols, key=str.lower)
         return cursor_index - len(col_prefix), col_prefix, suggestions
 
@@ -106,7 +106,7 @@ def get_suggestions(full_text: str, cursor_index: int, schema: dict):
         suggestions = _rank(pool, word) if word else sorted(set(pool), key=str.lower)[:50]
         return prefix_start, word, suggestions
 
-    all_columns = sorted({c for cols in schema.values() for c in cols})
+    all_columns = sorted({c[0] for cols in schema.values() for c in cols})
     pool = SQL_KEYWORDS + sorted(schema.keys()) + all_columns
     suggestions = _rank(pool, word)
     return prefix_start, word, suggestions

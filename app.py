@@ -2,8 +2,11 @@
 notepadb — a notepad/scratchpad, but only for databases.
 
 Type SQL, get autocomplete for real table/column names from the server
-you're connected to, run it, see results. SQL Server works today;
-PostgreSQL and MySQL/MariaDB are stubbed in db_backends.py for later.
+you're connected to, run it, see results. SQL Server, PostgreSQL, and
+MySQL/MariaDB are all supported via db_backends.py.
+
+Tabs are independent sessions (like SSMS query windows): each tab has its
+own connection, schema browser, and results grid.
 
 Run with:  py app.py
 """
@@ -52,11 +55,19 @@ def save_config(cfg):
         pass
 
 
-class Autocomplete:
-    """Floating suggestion popup for the SQL editor."""
+def _with_recent(history, value, limit=10):
+    value = value.strip()
+    if not value:
+        return history
+    return [value] + [v for v in history if v != value][: limit - 1]
 
-    def __init__(self, app):
-        self.app = app
+
+class Autocomplete:
+    """Floating suggestion popup for the SQL editor. `owner` is a QueryTab —
+    this only needs owner.schema / owner.editor / owner.highlight_syntax()."""
+
+    def __init__(self, owner):
+        self.app = owner
         self.popup = None
         self.listbox = None
         self.prefix_start = None
@@ -168,28 +179,26 @@ class ConnectDialog(tk.Toplevel):
         row = 0
         ttk.Label(frame, text="Engine:").grid(row=row, column=0, sticky="e", **pad)
         self.engine_var = tk.StringVar(value=defaults.get("engine", "sqlserver"))
+        self._engine_display_var = tk.StringVar()
         engine_box = ttk.Combobox(
-            frame, textvariable=self.engine_var, state="readonly",
-            values=["sqlserver", "postgres", "mysql"], width=28,
+            frame, textvariable=self._engine_display_var, state="readonly", width=28,
         )
         engine_box.grid(row=row, column=1, sticky="w", **pad)
 
         def fmt_engine(name):
             return {
                 "sqlserver": "SQL Server",
-                "postgres": "PostgreSQL (coming soon)",
-                "mysql": "MySQL / MariaDB (coming soon)",
+                "postgres": "PostgreSQL",
+                "mysql": "MySQL / MariaDB",
             }[name]
 
-        engine_box["values"] = ["sqlserver", "postgres", "mysql"]
-        engine_box.configure(postcommand=lambda: None)
         # Show friendly labels but keep engine keys underneath.
         self._engine_display_map = {fmt_engine(k): k for k in ["sqlserver", "postgres", "mysql"]}
         engine_box["values"] = list(self._engine_display_map.keys())
-        engine_box.set(fmt_engine(self.engine_var.get()))
+        self._engine_display_var.set(fmt_engine(self.engine_var.get()))
 
         def on_engine_pick(event=None):
-            display = engine_box.get()
+            display = self._engine_display_var.get()
             self.engine_var.set(self._engine_display_map[display])
 
         engine_box.bind("<<ComboboxSelected>>", on_engine_pick)
@@ -197,7 +206,11 @@ class ConnectDialog(tk.Toplevel):
 
         ttk.Label(frame, text="Server:").grid(row=row, column=0, sticky="e", **pad)
         self.server_var = tk.StringVar(value=defaults.get("server", "localhost"))
-        ttk.Entry(frame, textvariable=self.server_var, width=30).grid(row=row, column=1, sticky="w", **pad)
+        server_box = ttk.Combobox(
+            frame, textvariable=self.server_var, width=28,
+            values=defaults.get("recent_servers", []),
+        )
+        server_box.grid(row=row, column=1, sticky="w", **pad)
         row += 1
 
         ttk.Label(frame, text="Port (optional):").grid(row=row, column=0, sticky="e", **pad)
@@ -205,9 +218,13 @@ class ConnectDialog(tk.Toplevel):
         ttk.Entry(frame, textvariable=self.port_var, width=30).grid(row=row, column=1, sticky="w", **pad)
         row += 1
 
-        ttk.Label(frame, text="Database:").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Label(frame, text="Database (optional):").grid(row=row, column=0, sticky="e", **pad)
         self.database_var = tk.StringVar(value=defaults.get("database", ""))
-        ttk.Entry(frame, textvariable=self.database_var, width=30).grid(row=row, column=1, sticky="w", **pad)
+        database_box = ttk.Combobox(
+            frame, textvariable=self.database_var, width=28,
+            values=defaults.get("recent_databases", []),
+        )
+        database_box.grid(row=row, column=1, sticky="w", **pad)
         row += 1
 
         ttk.Label(frame, text="Authentication:").grid(row=row, column=0, sticky="e", **pad)
@@ -264,20 +281,14 @@ class ConnectDialog(tk.Toplevel):
 
     def _connect(self):
         engine = self.engine_var.get()
-        if engine != "sqlserver":
-            self.status_label.configure(text="That engine isn't implemented yet — pick SQL Server.")
-            return
         if not self.server_var.get().strip():
             self.status_label.configure(text="Server is required.")
-            return
-        if not self.database_var.get().strip():
-            self.status_label.configure(text="Database is required.")
             return
         self.result = {
             "engine": engine,
             "server": self.server_var.get().strip(),
             "port": self.port_var.get().strip() or None,
-            "database": self.database_var.get().strip(),
+            "database": self.database_var.get().strip() or None,
             "auth_mode": self.auth_var.get(),
             "username": self.username_var.get().strip(),
             "password": self.password_var.get(),
@@ -287,78 +298,104 @@ class ConnectDialog(tk.Toplevel):
         self.destroy()
 
 
-class NotepadDBApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("notepaDB — scratchpad for databases")
-        self.root.geometry("1200x780")
+class FindDialog(tk.Toplevel):
+    """Non-modal Find/Replace dialog, one per tab. Stays open across
+    searches; F3/Shift+F3 keep working off the tab's own find_var even
+    while this is closed."""
+
+    def __init__(self, owner):
+        super().__init__(owner.root)
+        self.app = owner
+        self.title("Find / Replace")
+        self.resizable(False, False)
+        self.transient(owner.root)
+        self._build()
+        self.protocol("WM_DELETE_WINDOW", self.withdraw)
+
+    def _build(self):
+        pad = {"padx": 8, "pady": 4}
+        frame = ttk.Frame(self)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        ttk.Label(frame, text="Find:").grid(row=0, column=0, sticky="e", **pad)
+        self.find_entry = ttk.Entry(frame, textvariable=self.app.find_var, width=30)
+        self.find_entry.grid(row=0, column=1, columnspan=3, sticky="we", **pad)
+        self.find_entry.bind("<Return>", lambda e: self.app.find_next())
+
+        ttk.Label(frame, text="Replace with:").grid(row=1, column=0, sticky="e", **pad)
+        self.replace_entry = ttk.Entry(frame, textvariable=self.app.replace_var, width=30)
+        self.replace_entry.grid(row=1, column=1, columnspan=3, sticky="we", **pad)
+        self.replace_entry.bind("<Return>", lambda e: self.app.replace_current())
+
+        ttk.Checkbutton(
+            frame, text="Match case", variable=self.app.match_case_var,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", **pad)
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=3, column=0, columnspan=4, pady=(8, 0))
+        ttk.Button(btn_frame, text="Find Next", command=self.app.find_next).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="Find Previous", command=self.app.find_previous).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="Replace", command=self.app.replace_current).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="Replace All", command=self.app.replace_all).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="Close", command=self.withdraw).pack(side="left", padx=4)
+
+    def focus_find(self):
+        self.find_entry.focus_set()
+        self.find_entry.select_range(0, "end")
+
+    def focus_replace(self):
+        self.replace_entry.focus_set()
+        self.replace_entry.select_range(0, "end")
+
+
+class QueryTab:
+    """One independent session: own connection, schema browser, editor and
+    results grid. Conceptually the same as one SSMS query window."""
+
+    TITLE_PREFIX = "Query"
+
+    def __init__(self, app, index):
+        self.app = app
+        self.index = index
+        self.title = f"{self.TITLE_PREFIX} {index}"
+        self.current_file = None
+        self.dirty = False
 
         self.backend = None
-        self.schema = None  # {'schema.table': [col, ...]}
-        self.current_file = None
-        self._work_queue = queue.Queue()
+        self.connected_server = None
+        self.databases = []  # all database names on the connected server
+        self.db_schema_cache = {}  # db_name -> {'schema.table': [(col, type), ...]}
+        self.active_database = None  # db the connection is USE'd into, for Run/autocomplete
+        self.schema = None  # active db's schema
 
-        self._build_menu()
-        self._build_toolbar()
+        self.find_var = tk.StringVar()
+        self.replace_var = tk.StringVar()
+        self.match_case_var = tk.BooleanVar(value=False)
+        self.find_dialog = None
+
+        self._work_queue = queue.Queue()
+        self._closed = False
+
+        self.frame = ttk.Frame(app.notebook)
         self._build_body()
-        self._build_statusbar()
+        self.apply_theme(self.app.dark_mode_var.get())
+        self.apply_word_wrap(self.app.word_wrap_var.get())
+        self.apply_line_numbers_visibility(self.app.show_line_numbers_var.get())
 
         self.autocomplete = Autocomplete(self)
         self._bind_editor_events()
         self.highlight_syntax()
 
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_queue)
 
-    # ---------- UI construction ----------
+    @property
+    def root(self):
+        return self.app.root
 
-    def _build_menu(self):
-        menubar = tk.Menu(self.root)
-
-        file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="New", command=self.new_file, accelerator="Ctrl+N")
-        file_menu.add_command(label="Open...", command=self.open_file, accelerator="Ctrl+O")
-        file_menu.add_command(label="Save", command=self.save_file, accelerator="Ctrl+S")
-        file_menu.add_command(label="Save As...", command=self.save_file_as)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self._on_close)
-        menubar.add_cascade(label="File", menu=file_menu)
-
-        conn_menu = tk.Menu(menubar, tearoff=0)
-        conn_menu.add_command(label="Connect...", command=self.open_connect_dialog, accelerator="Ctrl+K")
-        conn_menu.add_command(label="Disconnect", command=self.disconnect)
-        conn_menu.add_command(label="Refresh Schema", command=self.refresh_schema)
-        menubar.add_cascade(label="Connection", menu=conn_menu)
-
-        query_menu = tk.Menu(menubar, tearoff=0)
-        query_menu.add_command(label="Run", command=self.run_query, accelerator="F5")
-        menubar.add_cascade(label="Query", menu=query_menu)
-
-        help_menu = tk.Menu(menubar, tearoff=0)
-        help_menu.add_command(label="About", command=self._show_about)
-        menubar.add_cascade(label="Help", menu=help_menu)
-
-        self.root.config(menu=menubar)
-        self.root.bind("<Control-n>", lambda e: self.new_file())
-        self.root.bind("<Control-o>", lambda e: self.open_file())
-        self.root.bind("<Control-s>", lambda e: self.save_file())
-        self.root.bind("<Control-k>", lambda e: self.open_connect_dialog())
-        self.root.bind("<F5>", lambda e: self.run_query())
-
-    def _build_toolbar(self):
-        bar = ttk.Frame(self.root)
-        bar.pack(side="top", fill="x")
-        ttk.Button(bar, text="Connect...", command=self.open_connect_dialog).pack(side="left", padx=4, pady=4)
-        ttk.Button(bar, text="Disconnect", command=self.disconnect).pack(side="left", padx=4, pady=4)
-        ttk.Button(bar, text="Refresh Schema", command=self.refresh_schema).pack(side="left", padx=4, pady=4)
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
-        ttk.Button(bar, text="Run  (F5)", command=self.run_query).pack(side="left", padx=4, pady=4)
-
-        self.conn_label = ttk.Label(bar, text="Not connected", foreground="#b00020")
-        self.conn_label.pack(side="right", padx=10)
+    # ---------- body construction ----------
 
     def _build_body(self):
-        main = ttk.PanedWindow(self.root, orient="horizontal")
+        main = ttk.PanedWindow(self.frame, orient="horizontal")
         main.pack(side="top", fill="both", expand=True)
 
         # --- left: schema browser ---
@@ -373,12 +410,21 @@ class NotepadDBApp:
 
         self.schema_tree = ttk.Treeview(left, show="tree")
         self.schema_tree.pack(side="top", fill="both", expand=True)
-        self.schema_tree.bind("<Double-Button-1>", self._on_tree_double_click)
+        self.schema_tree.bind("<<TreeviewOpen>>", self._on_tree_open)
+        self.schema_tree.bind("<Button-3>", self._on_tree_right_click)
         self.schema_tree.bind("<ButtonPress-1>", self._on_tree_press, add="+")
         self.schema_tree.bind("<B1-Motion>", self._on_tree_motion, add="+")
         self.schema_tree.bind("<ButtonRelease-1>", self._on_tree_release, add="+")
+        self.schema_tree.bind("<KeyPress>", self._on_tree_keypress)
+        self.schema_tree.bind("<Motion>", self._on_tree_hover, add="+")
+        self.schema_tree.bind("<Leave>", self._on_tree_leave, add="+")
         main.add(left, weight=0)
 
+        self._tree_search_buffer = ""
+        self._tree_search_last_time = 0.0
+        self._tooltip_window = None
+        self._tooltip_after_id = None
+        self._tooltip_item = None
         self._drag_data = None
         self._drag_ghost = None
 
@@ -422,19 +468,37 @@ class NotepadDBApp:
         results_frame.columnconfigure(0, weight=1)
         right.add(results_frame, weight=2)
 
-        self._configure_syntax_tags()
+    def apply_word_wrap(self, enabled):
+        self.editor.configure(wrap="word" if enabled else "none")
 
-    def _build_statusbar(self):
-        self.status_var = tk.StringVar(value="Ready.")
-        bar = ttk.Frame(self.root)
-        bar.pack(side="bottom", fill="x")
-        ttk.Label(bar, textvariable=self.status_var, anchor="w").pack(side="left", fill="x", expand=True, padx=6, pady=2)
+    def apply_line_numbers_visibility(self, show):
+        if show:
+            self.line_numbers.pack(side="left", fill="y", before=self.editor)
+        else:
+            self.line_numbers.pack_forget()
 
-    def _configure_syntax_tags(self):
-        self.editor.tag_configure("kw", foreground="#0000cc", font=("Consolas", 11, "bold"))
-        self.editor.tag_configure("str", foreground="#a31515")
-        self.editor.tag_configure("comment", foreground="#008000")
-        self.editor.tag_configure("num", foreground="#098658")
+    def apply_theme(self, dark):
+        if dark:
+            editor_bg, editor_fg, editor_insert = "#1e1e1e", "#d4d4d4", "#ffffff"
+            ln_bg, ln_fg = "#252526", "#6e7681"
+            kw_c, str_c, comment_c, num_c = "#569cd6", "#ce9178", "#6a9955", "#b5cea8"
+            sheet_theme = "dark blue"
+        else:
+            editor_bg, editor_fg, editor_insert = "#ffffff", "#000000", "black"
+            ln_bg, ln_fg = "#f0f0f0", "#000000"
+            kw_c, str_c, comment_c, num_c = "#0000cc", "#a31515", "#008000", "#098658"
+            sheet_theme = "light blue"
+
+        self.editor.configure(background=editor_bg, foreground=editor_fg, insertbackground=editor_insert)
+        self.line_numbers.configure(background=ln_bg, foreground=ln_fg)
+        self.editor.tag_configure("kw", foreground=kw_c, font=("Consolas", 11, "bold"))
+        self.editor.tag_configure("str", foreground=str_c)
+        self.editor.tag_configure("comment", foreground=comment_c)
+        self.editor.tag_configure("num", foreground=num_c)
+        try:
+            self.results_sheet.change_theme(sheet_theme)
+        except Exception:
+            pass
 
     # ---------- editor scroll / line numbers ----------
 
@@ -465,6 +529,18 @@ class NotepadDBApp:
         self.editor.bind("<Tab>", self._on_tab)
         self.editor.bind("<Escape>", self._on_escape)
         self.editor.bind("<ButtonPress-1>", lambda e: self.autocomplete.hide())
+        self.editor.bind("<<Modified>>", self._on_modified_flag)
+
+    def _on_modified_flag(self, event):
+        modified = self.editor.edit_modified()
+        if modified != self.dirty:
+            self.dirty = modified
+            self._refresh_tab_label()
+
+    def _mark_clean(self):
+        self.editor.edit_modified(False)
+        self.dirty = False
+        self._refresh_tab_label()
 
     def _on_editor_key_release(self, event):
         if event.keysym in ("Up", "Down", "Return", "Tab", "Escape", "Shift_L", "Shift_R", "Control_L", "Control_R"):
@@ -516,43 +592,250 @@ class NotepadDBApp:
     # ---------- schema tree ----------
 
     def populate_schema_tree(self):
+        self._cancel_tooltip_timer()
+        self._hide_tooltip()
+        self._tooltip_item = None
         self.schema_tree.delete(*self.schema_tree.get_children())
-        if not self.schema:
+        if not self.databases:
             return
         filt = self.filter_var.get().strip().lower()
-        for table_key in sorted(self.schema.keys()):
-            cols = self.schema[table_key]
-            if filt and filt not in table_key.lower() and not any(filt in c.lower() for c in cols):
-                continue
-            table_node = self.schema_tree.insert("", "end", text=table_key, values=(table_key,), open=bool(filt))
-            for col in cols:
-                if filt and filt not in table_key.lower() and filt not in col.lower():
-                    continue
-                self.schema_tree.insert(table_node, "end", text=col, values=(f"{table_key}.{col}",))
+        for db_name in sorted(self.databases, key=str.lower):
+            db_node = self.schema_tree.insert(
+                "", "end", text=db_name, tags=("database",),
+                open=(db_name == self.active_database),
+            )
+            if db_name == self.active_database:
+                self.schema_tree.item(db_node, text=f"{db_name}  (active)")
+            cached = self.db_schema_cache.get(db_name)
+            if cached is not None:
+                self._populate_tables(db_node, cached, filt)
+            else:
+                self.schema_tree.insert(db_node, "end", text="(expand to load tables)", tags=("placeholder",))
 
-    def _on_tree_double_click(self, event):
+    def _populate_tables(self, db_node, schema, filt):
+        for table_key in sorted(schema.keys()):
+            cols = schema[table_key]  # [(col_name, type_str), ...]
+            if filt and filt not in table_key.lower() and not any(filt in name.lower() for name, _ in cols):
+                continue
+            table_node = self.schema_tree.insert(db_node, "end", text=table_key, values=(table_key,), open=bool(filt))
+            for col_name, col_type in cols:
+                if filt and filt not in table_key.lower() and filt not in col_name.lower():
+                    continue
+                self.schema_tree.insert(
+                    table_node, "end", text=f"{col_name}  {col_type}", values=(col_name,),
+                )
+
+    def _on_tree_open(self, event):
         item = self.schema_tree.focus()
+        if not item or "database" not in self.schema_tree.item(item, "tags"):
+            return
+        db_name = self.schema_tree.item(item, "text").split("  (active)")[0]
+        if db_name in self.db_schema_cache:
+            return
+        self._load_database_schema(item, db_name)
+
+    def _load_database_schema(self, db_node, db_name):
+        self.app.set_status(self, f"Loading tables for {db_name}...")
+
+        def work():
+            return self.backend.list_schema(db_name)
+
+        def done(result, error):
+            if error is not None:
+                self.app.set_status(self, f"Failed to load {db_name}.")
+                messagebox.showerror("Load failed", str(error))
+                return
+            self.db_schema_cache[db_name] = result
+            if not self.schema_tree.exists(db_node):
+                return
+            self.schema_tree.delete(*self.schema_tree.get_children(db_node))
+            filt = self.filter_var.get().strip().lower()
+            self._populate_tables(db_node, result, filt)
+            self.app.set_status(self, f"Loaded {len(result)} table(s) from {db_name}.")
+
+        self._run_async(work, done)
+
+    def _set_active_database(self, db_name):
+        if self.backend is None or not self.backend.is_connected:
+            return
+        if db_name == self.active_database:
+            return
+        self.app.set_status(self, f"Switching to {db_name}...")
+
+        def work():
+            self.backend.use_database(db_name)
+            return self.db_schema_cache.get(db_name) or self.backend.list_schema(db_name)
+
+        def done(result, error):
+            if error is not None:
+                self.app.set_status(self, "Switch failed.")
+                messagebox.showerror("Switch failed", str(error))
+                return
+            self.active_database = db_name
+            self.db_schema_cache[db_name] = result
+            self.schema = result
+            self._auto_title(db_name)
+            self.app._sync_chrome_if_active(self)
+            self.app.set_status(self, f"Using {db_name}. {len(result)} table(s).")
+            self.populate_schema_tree()
+            existing = load_config()
+            existing["server"] = self.connected_server
+            existing["database"] = db_name
+            existing["recent_databases"] = _with_recent(existing.get("recent_databases", []), db_name)
+            save_config(existing)
+
+        self._run_async(work, done)
+
+    def connection_label(self):
+        if self.backend is None or not self.backend.is_connected:
+            return "Not connected", "#b00020"
+        if self.active_database:
+            return (
+                f"Connected: {self.connected_server}/{self.active_database} ({self.backend.label})",
+                "#0a7a0a",
+            )
+        return f"Connected: {self.connected_server} ({self.backend.label})", "#0a7a0a"
+
+    def _on_tree_right_click(self, event):
+        item = self.schema_tree.identify_row(event.y)
+        if not item or "database" not in self.schema_tree.item(item, "tags"):
+            return
+        self.schema_tree.selection_set(item)
+        self.schema_tree.focus(item)
+        db_name = self._tree_item_label(item)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label=f"Use '{db_name}'", command=lambda: self._set_active_database(db_name))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _on_tree_hover(self, event):
+        if self._drag_data and self._drag_data.get("active"):
+            self._hide_tooltip()
+            return
+        item = self.schema_tree.identify_row(event.y)
+        if item == self._tooltip_item:
+            return
+        self._cancel_tooltip_timer()
+        self._hide_tooltip()
+        self._tooltip_item = item
         if not item:
             return
-        values = self.schema_tree.item(item, "values")
-        if not values:
+        self._tooltip_after_id = self.root.after(
+            500, lambda: self._show_tooltip(item, event.x_root, event.y_root)
+        )
+
+    def _on_tree_leave(self, event):
+        self._cancel_tooltip_timer()
+        self._hide_tooltip()
+        self._tooltip_item = None
+
+    def _cancel_tooltip_timer(self):
+        if self._tooltip_after_id is not None:
+            try:
+                self.root.after_cancel(self._tooltip_after_id)
+            except Exception:
+                pass
+            self._tooltip_after_id = None
+
+    def _show_tooltip(self, item, x_root, y_root):
+        self._tooltip_after_id = None
+        if not self.schema_tree.exists(item) or item != self._tooltip_item:
             return
-        text_to_insert = self.schema_tree.item(item, "text")
-        self.editor.insert(tk.INSERT, text_to_insert)
-        self.highlight_syntax()
-        self.editor.focus_set()
+        text = self.schema_tree.item(item, "text")
+        if not text:
+            return
+        self._hide_tooltip()
+        tip = tk.Toplevel(self.root)
+        tip.wm_overrideredirect(True)
+        tip.attributes("-topmost", True)
+        tip.geometry(f"+{x_root + 12}+{y_root + 8}")
+        tk.Label(
+            tip, text=text, background="#ffffe0", foreground="black",
+            relief="solid", borderwidth=1, font=("Segoe UI", 9), padx=4, pady=2,
+        ).pack()
+        self._tooltip_window = tip
+
+    def _hide_tooltip(self):
+        if self._tooltip_window is not None:
+            try:
+                self._tooltip_window.destroy()
+            except Exception:
+                pass
+            self._tooltip_window = None
+
+    def _tree_item_label(self, item):
+        return self.schema_tree.item(item, "text").split("  (active)")[0]
+
+    def _tree_item_search_key(self, item):
+        # Table nodes are labeled "schema.table" — search by the bare table
+        # name so typing doesn't require the schema prefix first.
+        label = self._tree_item_label(item)
+        return label.rsplit(".", 1)[-1] if "." in label else label
+
+    def _visible_tree_items(self):
+        items = []
+
+        def walk(parent):
+            for child in self.schema_tree.get_children(parent):
+                items.append(child)
+                if self.schema_tree.item(child, "open"):
+                    walk(child)
+
+        walk("")
+        return items
+
+    def _on_tree_keypress(self, event):
+        if event.keysym in (
+            "Up", "Down", "Left", "Right", "Return", "Tab", "Escape",
+            "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R",
+        ):
+            return None
+        ch = event.char
+        if not ch or not ch.isprintable():
+            return None
+
+        now = time.monotonic()
+        if now - self._tree_search_last_time > 0.8:
+            self._tree_search_buffer = ""
+        self._tree_search_last_time = now
+        self._tree_search_buffer += ch.lower()
+
+        items = self._visible_tree_items()
+        if not items:
+            return "break"
+
+        def find(prefix):
+            return next(
+                (it for it in items if self._tree_item_search_key(it).lower().startswith(prefix)),
+                None,
+            )
+
+        match = find(self._tree_search_buffer)
+        if match is None and len(self._tree_search_buffer) > 1:
+            # No match for the accumulated prefix — restart the search with
+            # just this keystroke, as if it were the first one typed.
+            self._tree_search_buffer = ch.lower()
+            match = find(self._tree_search_buffer)
+
+        if match is not None:
+            self.schema_tree.selection_set(match)
+            self.schema_tree.focus(match)
+            self.schema_tree.see(match)
+        return "break"
 
     # ---------- drag-and-drop: schema tree -> editor ----------
 
     DRAG_THRESHOLD_PX = 4
 
     def _on_tree_press(self, event):
+        self._cancel_tooltip_timer()
+        self._hide_tooltip()
         item = self.schema_tree.identify_row(event.y)
-        if not item or not self.schema_tree.item(item, "values"):
+        values = self.schema_tree.item(item, "values") if item else None
+        if not values:
             self._drag_data = None
             return
         self._drag_data = {
-            "text": self.schema_tree.item(item, "text"),
+            "text": values[0],
             "start_x": event.x_root,
             "start_y": event.y_root,
             "active": False,
@@ -626,41 +909,55 @@ class NotepadDBApp:
 
     # ---------- file operations ----------
 
-    def new_file(self):
-        if self.editor.get("1.0", "end-1c").strip():
-            if not messagebox.askyesno("New file", "Discard current contents?"):
-                return
-        self.editor.delete("1.0", "end")
-        self.current_file = None
-        self._update_line_numbers()
-        self.status_var.set("New scratchpad.")
-
-    def open_file(self):
-        path = filedialog.askopenfilename(filetypes=[("SQL files", "*.sql"), ("All files", "*.*")])
-        if not path:
-            return
+    def load_file(self, path):
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         self.editor.delete("1.0", "end")
         self.editor.insert("1.0", content)
         self.current_file = path
+        self.set_title(os.path.basename(path))
+        self._mark_clean()
         self.highlight_syntax()
         self._update_line_numbers()
-        self.status_var.set(f"Opened {path}")
+        self.app.set_status(self, f"Opened {path}")
 
     def save_file(self):
         if not self.current_file:
             return self.save_file_as()
         with open(self.current_file, "w", encoding="utf-8") as f:
             f.write(self.editor.get("1.0", "end-1c"))
-        self.status_var.set(f"Saved {self.current_file}")
+        self._mark_clean()
+        self.app.set_status(self, f"Saved {self.current_file}")
 
     def save_file_as(self):
-        path = filedialog.asksaveasfilename(defaultextension=".sql", filetypes=[("SQL files", "*.sql")])
+        path = filedialog.asksaveasfilename(
+            defaultextension=".sql", filetypes=[("SQL files", "*.sql")], initialfile=self.title,
+        )
         if not path:
             return
         self.current_file = path
+        self.set_title(os.path.basename(path))
         self.save_file()
+
+    def set_title(self, title):
+        self.title = title
+        self._refresh_tab_label()
+
+    def _refresh_tab_label(self):
+        label = self.title + ("*" if self.dirty else "")
+        self.app.notebook.tab(self.frame, text=label)
+
+    def _auto_title(self, base_name):
+        # Mirrors SSMS's "SQLQuery1, SQLQuery2, ..." but keyed off the actual
+        # database name instead of a generic prefix. Only kicks in before the
+        # user has explicitly saved the tab to a file of their own choosing.
+        if self.current_file is not None:
+            return
+        taken = {t.title for t in self.app.tabs if t is not self}
+        n = 1
+        while f"{base_name}{n}" in taken:
+            n += 1
+        self.set_title(f"{base_name}{n}")
 
     # ---------- connection ----------
 
@@ -673,7 +970,7 @@ class NotepadDBApp:
         self._connect_with(dialog.result)
 
     def _connect_with(self, params):
-        self.status_var.set(f"Connecting to {params['server']}/{params['database']}...")
+        self.app.set_status(self, f"Connecting to {params['server']}...")
         backend_cls = BACKENDS[params["engine"]]
         backend = backend_cls()
 
@@ -688,25 +985,40 @@ class NotepadDBApp:
                 trust_cert=params["trust_cert"],
                 port=params["port"],
             )
-            schema = backend.list_schema()
-            return backend, schema, params
+            databases = backend.list_databases()
+            active_schema = backend.list_schema(params["database"]) if params["database"] else None
+            return backend, databases, active_schema, params
 
         def done(result, error):
             if error is not None:
-                self.status_var.set("Connection failed.")
+                self.app.set_status(self, "Connection failed.")
                 messagebox.showerror("Connection failed", str(error))
                 return
-            backend, schema, params = result
+            backend, databases, active_schema, params = result
             self.backend = backend
-            self.schema = schema
+            self.connected_server = params["server"]
+            self.databases = databases
+            self.db_schema_cache = {}
+            self.active_database = params["database"]
+            if active_schema is not None:
+                self.db_schema_cache[self.active_database] = active_schema
+            self.schema = active_schema
+            self._auto_title(self.active_database or self.connected_server)
             self.populate_schema_tree()
-            self.conn_label.configure(
-                text=f"Connected: {params['server']}/{params['database']} ({backend.label})",
-                foreground="#0a7a0a",
-            )
-            self.status_var.set(f"Connected. {len(schema)} tables loaded.")
+            self.app._sync_chrome_if_active(self)
+            if self.active_database:
+                self.app.set_status(self, f"Connected. {len(active_schema)} tables loaded.")
+            else:
+                self.app.set_status(self, f"Connected. {len(databases)} database(s) found — pick one to drill in.")
             to_save = dict(params)
             to_save.pop("password", None)
+            existing = load_config()
+            to_save["recent_servers"] = _with_recent(
+                existing.get("recent_servers", []), params["server"]
+            )
+            to_save["recent_databases"] = _with_recent(
+                existing.get("recent_databases", []), params["database"] or ""
+            )
             save_config(to_save)
 
         self._run_async(work, done)
@@ -715,30 +1027,147 @@ class NotepadDBApp:
         if self.backend is not None:
             self.backend.disconnect()
         self.backend = None
+        self.connected_server = None
+        self.databases = []
+        self.db_schema_cache = {}
+        self.active_database = None
         self.schema = None
         self.populate_schema_tree()
-        self.conn_label.configure(text="Not connected", foreground="#b00020")
-        self.status_var.set("Disconnected.")
+        self.app._sync_chrome_if_active(self)
+        self.app.set_status(self, "Disconnected.")
 
     def refresh_schema(self):
         if self.backend is None or not self.backend.is_connected:
             messagebox.showinfo("Not connected", "Connect to a database first.")
             return
-        self.status_var.set("Refreshing schema...")
+        self.app.set_status(self, "Refreshing schema...")
 
         def work():
-            return self.backend.list_schema()
+            databases = self.backend.list_databases()
+            active_schema = self.backend.list_schema(self.active_database) if self.active_database else None
+            return databases, active_schema
 
         def done(result, error):
             if error is not None:
-                self.status_var.set("Schema refresh failed.")
+                self.app.set_status(self, "Schema refresh failed.")
                 messagebox.showerror("Schema refresh failed", str(error))
                 return
-            self.schema = result
+            databases, active_schema = result
+            self.databases = databases
+            self.db_schema_cache = {}
+            if self.active_database:
+                self.db_schema_cache[self.active_database] = active_schema
+            self.schema = active_schema
             self.populate_schema_tree()
-            self.status_var.set(f"Schema refreshed. {len(result)} tables.")
+            self.app.set_status(self, f"Schema refreshed. {len(databases)} database(s).")
 
         self._run_async(work, done)
+
+    # ---------- find / replace ----------
+
+    def _ensure_find_dialog(self):
+        if self.find_dialog is None or not self.find_dialog.winfo_exists():
+            self.find_dialog = FindDialog(self)
+        self.find_dialog.deiconify()
+        self.find_dialog.lift()
+        return self.find_dialog
+
+    def open_find_dialog(self):
+        self._ensure_find_dialog().focus_find()
+
+    def open_replace_dialog(self):
+        self._ensure_find_dialog().focus_replace()
+
+    def _find(self, query, start, backwards):
+        if backwards:
+            return self.editor.search(
+                query, start, stopindex="1.0", backwards=True, nocase=not self.match_case_var.get(),
+            )
+        return self.editor.search(
+            query, start, stopindex="end", nocase=not self.match_case_var.get(),
+        )
+
+    def _select_match(self, idx, query, place_cursor_at_start):
+        end = f"{idx}+{len(query)}c"
+        self.editor.tag_remove("sel", "1.0", "end")
+        self.editor.tag_add("sel", idx, end)
+        self.editor.mark_set(tk.INSERT, idx if place_cursor_at_start else end)
+        self.editor.see(idx)
+        self.editor.focus_set()
+
+    def find_next(self):
+        query = self.find_var.get()
+        if not query:
+            self.app.set_status(self, "Nothing to find.")
+            return
+        try:
+            start = self.editor.index("sel.last")
+        except tk.TclError:
+            start = self.editor.index(tk.INSERT)
+        idx = self._find(query, start, backwards=False) or self._find(query, "1.0", backwards=False)
+        if not idx:
+            self.app.set_status(self, f'"{query}" not found.')
+            return
+        self._select_match(idx, query, place_cursor_at_start=False)
+        self.app.set_status(self, f'Found "{query}".')
+
+    def find_previous(self):
+        query = self.find_var.get()
+        if not query:
+            self.app.set_status(self, "Nothing to find.")
+            return
+        try:
+            start = self.editor.index("sel.first")
+        except tk.TclError:
+            start = self.editor.index(tk.INSERT)
+        idx = self._find(query, start, backwards=True) or self._find(query, "end", backwards=True)
+        if not idx:
+            self.app.set_status(self, f'"{query}" not found.')
+            return
+        self._select_match(idx, query, place_cursor_at_start=True)
+        self.app.set_status(self, f'Found "{query}".')
+
+    def replace_current(self):
+        query = self.find_var.get()
+        if not query:
+            self.app.set_status(self, "Nothing to find.")
+            return
+        try:
+            sel_start, sel_end = self.editor.index("sel.first"), self.editor.index("sel.last")
+            selected = self.editor.get(sel_start, sel_end)
+            is_match = selected == query if self.match_case_var.get() else selected.lower() == query.lower()
+        except tk.TclError:
+            is_match = False
+        if is_match:
+            replacement = self.replace_var.get()
+            self.editor.delete(sel_start, sel_end)
+            self.editor.insert(sel_start, replacement)
+            self.editor.mark_set(tk.INSERT, f"{sel_start}+{len(replacement)}c")
+            self.highlight_syntax()
+            self._update_line_numbers()
+        self.find_next()
+
+    def replace_all(self):
+        query = self.find_var.get()
+        if not query:
+            self.app.set_status(self, "Nothing to find.")
+            return
+        replacement = self.replace_var.get()
+        nocase = not self.match_case_var.get()
+        count = 0
+        idx = "1.0"
+        while True:
+            idx = self.editor.search(query, idx, stopindex="end", nocase=nocase)
+            if not idx:
+                break
+            end = f"{idx}+{len(query)}c"
+            self.editor.delete(idx, end)
+            self.editor.insert(idx, replacement)
+            idx = f"{idx}+{len(replacement)}c"
+            count += 1
+        self.highlight_syntax()
+        self._update_line_numbers()
+        self.app.set_status(self, f"Replaced {count} occurrence(s).")
 
     # ---------- query execution ----------
 
@@ -753,10 +1182,10 @@ class NotepadDBApp:
             sql = self.editor.get("1.0", "end-1c")
         sql = sql.strip()
         if not sql:
-            self.status_var.set("Nothing to run.")
+            self.app.set_status(self, "Nothing to run.")
             return
 
-        self.status_var.set("Running query...")
+        self.app.set_status(self, "Running query...")
         started = time.monotonic()
 
         def work():
@@ -765,22 +1194,23 @@ class NotepadDBApp:
         def done(result, error):
             elapsed_ms = (time.monotonic() - started) * 1000
             if error is not None:
-                self.status_var.set(f"Error after {elapsed_ms:.0f} ms.")
+                self.app.set_status(self, f"Error after {elapsed_ms:.0f} ms.")
                 messagebox.showerror("Query error", str(error))
                 return
             columns, rows = result
             if columns is None:
                 affected = rows
-                self.status_var.set(f"OK. {affected} row(s) affected. ({elapsed_ms:.0f} ms)")
+                self.app.set_status(self, f"OK. {affected} row(s) affected. ({elapsed_ms:.0f} ms)")
                 self.results_sheet.headers([])
                 self.results_sheet.set_sheet_data([], reset_highlights=True)
                 return
             self._show_results(columns, rows)
             truncated = len(rows) > 2000
             shown = min(len(rows), 2000)
-            self.status_var.set(
+            self.app.set_status(
+                self,
                 f"{len(rows)} row(s) returned ({elapsed_ms:.0f} ms)"
-                + (f" — showing first {shown}" if truncated else "")
+                + (f" — showing first {shown}" if truncated else ""),
             )
 
         self._run_async(work, done)
@@ -845,7 +1275,348 @@ class NotepadDBApp:
                 done_fn(result, error)
         except queue.Empty:
             pass
-        self.root.after(100, self._poll_queue)
+        if not self._closed:
+            self.root.after(100, self._poll_queue)
+
+    # ---------- lifecycle ----------
+
+    def reset_blank(self):
+        """Used when closing the last remaining tab — reset it instead of
+        leaving the app with zero tabs."""
+        if self.backend is not None:
+            self.backend.disconnect()
+        self.backend = None
+        self.connected_server = None
+        self.databases = []
+        self.db_schema_cache = {}
+        self.active_database = None
+        self.schema = None
+        self.populate_schema_tree()
+        self.editor.delete("1.0", "end")
+        self.current_file = None
+        self.set_title(f"{self.TITLE_PREFIX} {self.index}")
+        self._mark_clean()
+        self._update_line_numbers()
+        self.app._sync_chrome_if_active(self)
+        self.app.set_status(self, "Tab reset.")
+
+    def teardown(self):
+        self._closed = True
+        if self.find_dialog is not None and self.find_dialog.winfo_exists():
+            self.find_dialog.destroy()
+        self._hide_tooltip()
+        if self.backend is not None:
+            self.backend.disconnect()
+
+
+class NotepaDBApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("notepaDB — scratchpad for databases")
+        self.root.geometry("1200x780")
+
+        self.status_var = tk.StringVar(value="Ready.")
+        self.tabs = []
+        self._tab_for_frame = {}
+        self._tab_counter = 0
+        self._menus = []
+
+        options_cfg = load_config()
+        self.dark_mode_var = tk.BooleanVar(value=options_cfg.get("dark_mode", False))
+        self.show_line_numbers_var = tk.BooleanVar(value=options_cfg.get("show_line_numbers", True))
+        self.word_wrap_var = tk.BooleanVar(value=options_cfg.get("word_wrap", False))
+
+        self._native_ttk_theme = ttk.Style().theme_use()
+        self._configure_dark_ttk_style()
+
+        self._build_menu()
+        self._build_toolbar()
+        self._build_notebook()
+        self._build_statusbar()
+
+        self.new_tab()
+        self._apply_global_ttk_theme()
+        self._apply_chrome_theme()
+
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    @property
+    def active_tab(self):
+        if not self.tabs:
+            return None
+        sel = self.notebook.select()
+        if not sel:
+            return None
+        frame = self.notebook.nametowidget(sel)
+        return self._tab_for_frame.get(frame)
+
+    def _dispatch(self, method_name, *args):
+        tab = self.active_tab
+        if tab is not None:
+            getattr(tab, method_name)(*args)
+
+    def set_status(self, tab, message):
+        if self.active_tab is tab:
+            self.status_var.set(message)
+        else:
+            self.status_var.set(f"[{tab.title}] {message}")
+
+    def _sync_chrome_if_active(self, tab):
+        if self.active_tab is tab:
+            self._sync_chrome()
+
+    def _sync_chrome(self):
+        tab = self.active_tab
+        if tab is None:
+            return
+        text, color = tab.connection_label()
+        self.conn_label.configure(text=text, foreground=color)
+
+    # ---------- options ----------
+
+    def _save_option(self, key, value):
+        cfg = load_config()
+        cfg[key] = value
+        save_config(cfg)
+
+    def toggle_dark_mode(self):
+        self._save_option("dark_mode", self.dark_mode_var.get())
+        self._apply_global_ttk_theme()
+        self._apply_chrome_theme()
+        for tab in self.tabs:
+            tab.apply_theme(self.dark_mode_var.get())
+
+    def toggle_line_numbers(self):
+        self._save_option("show_line_numbers", self.show_line_numbers_var.get())
+        for tab in self.tabs:
+            tab.apply_line_numbers_visibility(self.show_line_numbers_var.get())
+
+    def toggle_word_wrap(self):
+        self._save_option("word_wrap", self.word_wrap_var.get())
+        for tab in self.tabs:
+            tab.apply_word_wrap(self.word_wrap_var.get())
+
+    def _configure_dark_ttk_style(self):
+        # ttk's native "vista" theme on Windows ignores most color overrides
+        # (it paints itself), so dark mode needs a themeable base — "clam" —
+        # configured once here. Toggling just switches which theme is active;
+        # the native theme's own look is never touched, so light mode always
+        # restores it exactly.
+        bg, bg_alt, fg, sel = "#1e1e1e", "#2d2d2d", "#d4d4d4", "#094771"
+        style = ttk.Style()
+        if "notepadb_dark" not in style.theme_names():
+            style.theme_create("notepadb_dark", parent="clam")
+        style.theme_use("notepadb_dark")
+        style.configure(".", background=bg, foreground=fg, fieldbackground=bg_alt, bordercolor="#3c3c3c")
+        style.configure("TFrame", background=bg)
+        style.configure("TLabel", background=bg, foreground=fg)
+        style.configure("TButton", background=bg_alt, foreground=fg)
+        style.map("TButton", background=[("active", "#3c3c3c")])
+        style.configure("TEntry", fieldbackground=bg_alt, foreground=fg, insertcolor=fg)
+        style.configure("TCombobox", fieldbackground=bg_alt, foreground=fg, background=bg_alt, arrowcolor=fg)
+        style.map("TCombobox", fieldbackground=[("readonly", bg_alt)], foreground=[("readonly", fg)])
+        style.configure("TCheckbutton", background=bg, foreground=fg)
+        style.map("TCheckbutton", background=[("active", bg)])
+        style.configure("TRadiobutton", background=bg, foreground=fg)
+        style.configure("TPanedwindow", background=bg)
+        style.configure("TNotebook", background=bg, borderwidth=0)
+        style.configure("TNotebook.Tab", background=bg_alt, foreground=fg, padding=(8, 4))
+        style.map("TNotebook.Tab", background=[("selected", sel)], foreground=[("selected", "#ffffff")])
+        style.configure("Treeview", background=bg_alt, fieldbackground=bg_alt, foreground=fg)
+        style.map("Treeview", background=[("selected", sel)], foreground=[("selected", "#ffffff")])
+        style.configure("Treeview.Heading", background=bg_alt, foreground=fg)
+        style.configure("TSeparator", background="#3c3c3c")
+        style.configure("TScrollbar", background=bg_alt, troughcolor=bg, arrowcolor=fg)
+        style.theme_use(self._native_ttk_theme)  # leave it as it was until toggled on
+
+    def _apply_global_ttk_theme(self):
+        style = ttk.Style()
+        style.theme_use("notepadb_dark" if self.dark_mode_var.get() else self._native_ttk_theme)
+
+    def _apply_chrome_theme(self):
+        dark = self.dark_mode_var.get()
+        if dark:
+            root_bg = "#1e1e1e"
+            menu_colors = dict(
+                bg="#2d2d2d", fg="#d4d4d4", activebackground="#094771", activeforeground="#ffffff",
+            )
+        else:
+            root_bg = "SystemButtonFace"
+            menu_colors = dict(
+                bg="SystemMenu", fg="SystemMenuText",
+                activebackground="SystemHighlight", activeforeground="SystemHighlightText",
+            )
+        try:
+            self.root.configure(background=root_bg)
+        except tk.TclError:
+            pass
+        for menu in self._menus:
+            try:
+                menu.configure(**menu_colors)
+            except tk.TclError:
+                pass
+
+    # ---------- UI construction ----------
+
+    def _build_menu(self):
+        menubar = tk.Menu(self.root)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="New Tab", command=self.new_tab, accelerator="Ctrl+T")
+        file_menu.add_command(label="Open...", command=self.open_file, accelerator="Ctrl+O")
+        file_menu.add_command(label="Save", command=lambda: self._dispatch("save_file"), accelerator="Ctrl+S")
+        file_menu.add_command(label="Save As...", command=lambda: self._dispatch("save_file_as"))
+        file_menu.add_separator()
+        file_menu.add_command(label="Close Tab", command=self.close_tab, accelerator="Ctrl+W")
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self._on_close)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        conn_menu = tk.Menu(menubar, tearoff=0)
+        conn_menu.add_command(label="Connect...", command=lambda: self._dispatch("open_connect_dialog"), accelerator="Ctrl+K")
+        conn_menu.add_command(label="Disconnect", command=lambda: self._dispatch("disconnect"))
+        conn_menu.add_command(label="Refresh Schema", command=lambda: self._dispatch("refresh_schema"))
+        menubar.add_cascade(label="Connection", menu=conn_menu)
+
+        find_menu = tk.Menu(menubar, tearoff=0)
+        find_menu.add_command(label="Find...", command=lambda: self._dispatch("open_find_dialog"), accelerator="Ctrl+F")
+        find_menu.add_command(label="Find Next", command=lambda: self._dispatch("find_next"), accelerator="F3")
+        find_menu.add_command(label="Find Previous", command=lambda: self._dispatch("find_previous"), accelerator="Shift+F3")
+        find_menu.add_separator()
+        find_menu.add_command(label="Replace...", command=lambda: self._dispatch("open_replace_dialog"), accelerator="Ctrl+H")
+        find_menu.add_command(label="Replace All", command=lambda: self._dispatch("replace_all"))
+        menubar.add_cascade(label="Find", menu=find_menu)
+
+        query_menu = tk.Menu(menubar, tearoff=0)
+        query_menu.add_command(label="Run", command=lambda: self._dispatch("run_query"), accelerator="F5")
+        menubar.add_cascade(label="Query", menu=query_menu)
+
+        options_menu = tk.Menu(menubar, tearoff=0)
+        options_menu.add_checkbutton(
+            label="Dark Mode", variable=self.dark_mode_var, command=self.toggle_dark_mode,
+        )
+        options_menu.add_checkbutton(
+            label="Show Line Numbers", variable=self.show_line_numbers_var, command=self.toggle_line_numbers,
+        )
+        options_menu.add_checkbutton(
+            label="Word Wrap", variable=self.word_wrap_var, command=self.toggle_word_wrap,
+        )
+        menubar.add_cascade(label="Options", menu=options_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="About", command=self._show_about)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self._menus = [
+            menubar, file_menu, conn_menu, find_menu, query_menu, options_menu, help_menu,
+        ]
+
+        self.root.config(menu=menubar)
+        self.root.bind("<Control-t>", lambda e: self.new_tab())
+        self.root.bind("<Control-n>", lambda e: self.new_tab())
+        self.root.bind("<Control-w>", lambda e: self.close_tab())
+        self.root.bind("<Control-o>", lambda e: self.open_file())
+        self.root.bind("<Control-s>", lambda e: self._dispatch("save_file"))
+        self.root.bind("<Control-k>", lambda e: self._dispatch("open_connect_dialog"))
+        self.root.bind("<F5>", lambda e: self._dispatch("run_query"))
+        self.root.bind("<Control-f>", lambda e: self._dispatch("open_find_dialog"))
+        self.root.bind("<Control-h>", lambda e: self._dispatch("open_replace_dialog"))
+        self.root.bind("<F3>", lambda e: self._dispatch("find_next"))
+        self.root.bind("<Shift-F3>", lambda e: self._dispatch("find_previous"))
+
+    def _build_toolbar(self):
+        bar = ttk.Frame(self.root)
+        bar.pack(side="top", fill="x")
+        ttk.Button(bar, text="New Tab", command=self.new_tab).pack(side="left", padx=4, pady=4)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
+        ttk.Button(bar, text="Connect...", command=lambda: self._dispatch("open_connect_dialog")).pack(side="left", padx=4, pady=4)
+        ttk.Button(bar, text="Disconnect", command=lambda: self._dispatch("disconnect")).pack(side="left", padx=4, pady=4)
+        ttk.Button(bar, text="Refresh Schema", command=lambda: self._dispatch("refresh_schema")).pack(side="left", padx=4, pady=4)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
+        ttk.Button(bar, text="Run  (F5)", command=lambda: self._dispatch("run_query")).pack(side="left", padx=4, pady=4)
+
+        self.conn_label = ttk.Label(bar, text="Not connected", foreground="#b00020")
+        self.conn_label.pack(side="right", padx=10)
+
+    def _build_notebook(self):
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(side="top", fill="both", expand=True)
+        self.notebook.bind("<<NotebookTabChanged>>", lambda e: self._sync_chrome())
+        self.notebook.bind("<Button-3>", self._on_tab_right_click)
+
+    def _build_statusbar(self):
+        bar = ttk.Frame(self.root)
+        bar.pack(side="bottom", fill="x")
+        ttk.Label(bar, textvariable=self.status_var, anchor="w").pack(side="left", fill="x", expand=True, padx=6, pady=2)
+
+    # ---------- tab management ----------
+
+    def new_tab(self):
+        self._tab_counter += 1
+        tab = QueryTab(self, self._tab_counter)
+        self.notebook.add(tab.frame, text=tab.title)
+        self._tab_for_frame[tab.frame] = tab
+        self.tabs.append(tab)
+        self.notebook.select(tab.frame)
+        tab.editor.focus_set()
+        self._sync_chrome()
+        return tab
+
+    def open_file(self):
+        path = filedialog.askopenfilename(filetypes=[("SQL files", "*.sql"), ("All files", "*.*")])
+        if not path:
+            return
+        tab = self.new_tab()
+        tab.load_file(path)
+
+    def close_tab(self, tab=None):
+        tab = tab or self.active_tab
+        if tab is None:
+            return
+        if not self._confirm_close(tab):
+            return
+        if len(self.tabs) == 1:
+            tab.reset_blank()
+            return
+        tab.teardown()
+        self.notebook.forget(tab.frame)
+        del self._tab_for_frame[tab.frame]
+        self.tabs.remove(tab)
+        tab.frame.destroy()
+        self._sync_chrome()
+
+    def _confirm_close(self, tab):
+        """True if it's OK to proceed closing/discarding `tab` — prompts to
+        save first if it has unsaved changes. False means the caller should
+        abort (either the user hit Cancel, or a Save-As they triggered was
+        itself cancelled)."""
+        if not tab.dirty:
+            return True
+        self.notebook.select(tab.frame)
+        answer = messagebox.askyesnocancel(
+            "Unsaved changes",
+            f"'{tab.title}' has unsaved changes. Save before closing?",
+        )
+        if answer is None:
+            return False
+        if answer:
+            tab.save_file()
+            if tab.dirty:
+                return False
+        return True
+
+    def _on_tab_right_click(self, event):
+        try:
+            idx = self.notebook.index(f"@{event.x},{event.y}")
+        except tk.TclError:
+            return
+        frame = self.notebook.nametowidget(self.notebook.tabs()[idx])
+        tab = self._tab_for_frame.get(frame)
+        if tab is None:
+            return
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Close Tab", command=lambda: self.close_tab(tab))
+        menu.tk_popup(event.x_root, event.y_root)
 
     # ---------- misc ----------
 
@@ -854,13 +1625,17 @@ class NotepadDBApp:
             "About notepaDB",
             "notepaDB — a notepad, but only for databases.\n\n"
             "Type SQL, autocomplete real table/column names, run it.\n\n"
-            "Supported today: SQL Server.\n"
-            "Coming later: PostgreSQL, MySQL/MariaDB.",
+            "Each tab is an independent session with its own connection.\n\n"
+            "Supported engines: SQL Server, PostgreSQL, MySQL/MariaDB.",
         )
 
     def _on_close(self):
-        if self.backend is not None:
-            self.backend.disconnect()
+        for tab in self.tabs:
+            if not self._confirm_close(tab):
+                return
+        for tab in self.tabs:
+            if tab.backend is not None:
+                tab.backend.disconnect()
         self.root.destroy()
 
 
@@ -870,9 +1645,9 @@ def main():
         root.state("zoomed")
     except tk.TclError:
         root.attributes("-zoomed", True)
-    app = NotepadDBApp(root)
-    app.editor.insert("1.0", "-- Connect (Ctrl+K), then start typing, e.g.:\n-- SELECT * FROM \n")
-    app._update_line_numbers()
+    app = NotepaDBApp(root)
+    tab = app.active_tab
+    tab._update_line_numbers()
     root.mainloop()
 
 
