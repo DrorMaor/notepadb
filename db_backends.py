@@ -63,6 +63,12 @@ class DbBackend(ABC):
         """Run one statement; return (column_names, rows) or (None, None) for
         statements that don't produce a result set (INSERT/UPDATE/DDL)."""
 
+    def cancel(self) -> bool:
+        """Interrupt a query that's currently blocking inside execute() on
+        another thread. Returns whether the cancel request was sent
+        successfully (not whether the query actually stopped in time)."""
+        return False
+
 
 class SqlServerBackend(DbBackend):
     label = "SQL Server"
@@ -70,6 +76,7 @@ class SqlServerBackend(DbBackend):
     def __init__(self):
         super().__init__()
         self.current_database = None
+        self._active_cursor = None
 
     def connect(self, server, database=None, auth_mode="windows", username=None, password=None,
                 encrypt=True, trust_cert=True, port=None, timeout=10):
@@ -172,34 +179,48 @@ class SqlServerBackend(DbBackend):
         if not self.is_connected:
             raise BackendError("Not connected.")
         cur = self.conn.cursor()
+        self._active_cursor = cur
         try:
-            cur.execute(sql)
-        except Exception as exc:
-            raise BackendError(str(exc)) from exc
-
-        # A batch can contain several statements (e.g. "USE db" followed by a
-        # SELECT); each produces its own result set, so keep advancing past
-        # the ones with no rows (USE, DDL, ...) until we find the last one
-        # that returned data, or run out.
-        columns, rows, rowcount = None, None, -1
-        has_result = True
-        while has_result:
-            if cur.description is not None:
-                columns = [col[0] for col in cur.description]
-                rows = cur.fetchall()
-            else:
-                try:
-                    rowcount = cur.rowcount
-                except Exception:
-                    pass
             try:
-                has_result = cur.nextset()
-            except Exception:
-                has_result = False
+                cur.execute(sql)
+            except Exception as exc:
+                raise BackendError(str(exc)) from exc
 
-        if columns is None:
-            return None, rowcount
-        return columns, rows
+            # A batch can contain several statements (e.g. "USE db" followed by a
+            # SELECT); each produces its own result set, so keep advancing past
+            # the ones with no rows (USE, DDL, ...) until we find the last one
+            # that returned data, or run out.
+            columns, rows, rowcount = None, None, -1
+            has_result = True
+            while has_result:
+                if cur.description is not None:
+                    columns = [col[0] for col in cur.description]
+                    rows = cur.fetchall()
+                else:
+                    try:
+                        rowcount = cur.rowcount
+                    except Exception:
+                        pass
+                try:
+                    has_result = cur.nextset()
+                except Exception:
+                    has_result = False
+
+            if columns is None:
+                return None, rowcount
+            return columns, rows
+        finally:
+            self._active_cursor = None
+
+    def cancel(self) -> bool:
+        cur = getattr(self, "_active_cursor", None)
+        if cur is None:
+            return False
+        try:
+            cur.cancel()
+            return True
+        except Exception:
+            return False
 
 
 class PostgresBackend(DbBackend):
@@ -344,6 +365,15 @@ class PostgresBackend(DbBackend):
         rows = cur.fetchall()
         return columns, rows
 
+    def cancel(self) -> bool:
+        if self.conn is None:
+            return False
+        try:
+            self.conn.cancel()
+            return True
+        except Exception:
+            return False
+
 
 class MySqlBackend(DbBackend):
     """Needs mysql-connector-python (`pip install mysql-connector-python`).
@@ -354,6 +384,7 @@ class MySqlBackend(DbBackend):
     def __init__(self):
         super().__init__()
         self.current_database = None
+        self._conn_kwargs = None
 
     def connect(self, server, database=None, auth_mode="windows", username=None, password=None,
                 encrypt=True, trust_cert=True, port=None, timeout=10):
@@ -384,6 +415,7 @@ class MySqlBackend(DbBackend):
             self.conn = None
             raise BackendError(_friendly_mysql_error(exc)) from exc
         self.current_database = database or None
+        self._conn_kwargs = kwargs
 
     def list_databases(self) -> list:
         if not self.is_connected:
@@ -450,6 +482,30 @@ class MySqlBackend(DbBackend):
         if columns is None:
             return None, rowcount
         return columns, rows
+
+    def cancel(self) -> bool:
+        """mysql-connector has no in-band cancel, so interrupt the running
+        query the same way the `mysql` CLI does: open a throwaway connection
+        with the same credentials and issue KILL QUERY against this
+        connection's id."""
+        if self.conn is None or self._conn_kwargs is None:
+            return False
+        try:
+            conn_id = self.conn.connection_id
+        except Exception:
+            return False
+
+        import mysql.connector
+
+        try:
+            killer = mysql.connector.connect(**self._conn_kwargs)
+            try:
+                killer.cursor().execute(f"KILL QUERY {int(conn_id)}")
+            finally:
+                killer.close()
+            return True
+        except Exception:
+            return False
 
 
 BACKENDS = {

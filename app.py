@@ -11,8 +11,10 @@ own connection, schema browser, and results grid.
 Run with:  py app.py
 """
 
+import csv
 import json
 import os
+import webbrowser
 import queue
 import re
 import threading
@@ -263,11 +265,15 @@ class ConnectDialog(tk.Toplevel):
 
         btn_frame = ttk.Frame(frame)
         btn_frame.grid(row=row, column=0, columnspan=2, pady=(10, 0))
-        self.connect_btn = ttk.Button(btn_frame, text="Connect", command=self._connect)
+        self.connect_btn = ttk.Button(btn_frame, text="Connect", command=self._connect, default="active")
         self.connect_btn.pack(side="left", padx=4)
         ttk.Button(btn_frame, text="Cancel", command=self._cancel).pack(side="left", padx=4)
 
         self._sync_auth_fields()
+        self.bind("<Return>", lambda e: self._connect())
+        # focus_set() before the window is actually mapped doesn't stick —
+        # defer it until after the Toplevel has appeared on screen.
+        self.after_idle(self.connect_btn.focus_set)
 
     def _sync_auth_fields(self):
         is_sql = self.auth_var.get() == "sql"
@@ -375,12 +381,15 @@ class QueryTab:
 
         self._work_queue = queue.Queue()
         self._closed = False
+        self._query_running = False
+        self._cancel_requested = False
 
         self.frame = ttk.Frame(app.notebook)
         self._build_body()
         self.apply_theme(self.app.dark_mode_var.get())
         self.apply_word_wrap(self.app.word_wrap_var.get())
         self.apply_line_numbers_visibility(self.app.show_line_numbers_var.get())
+        self._log_message("Ready.")
 
         self.autocomplete = Autocomplete(self)
         self._bind_editor_events()
@@ -428,9 +437,15 @@ class QueryTab:
         self._drag_data = None
         self._drag_ghost = None
 
-        # --- right: editor + results, stacked vertically ---
-        right = ttk.PanedWindow(main, orient="vertical")
-        main.add(right, weight=1)
+        # --- right: editor + results, stacked vertically, with a message
+        # log pinned below (outside the resizable panes). ---
+        right_outer = ttk.Frame(main)
+        main.add(right_outer, weight=1)
+
+        right = ttk.PanedWindow(right_outer, orient="vertical")
+        # Packed after log_frame below — pack() allocates space in call
+        # order, so the log panel must claim its fixed-height slice of
+        # right_outer first, or this expand=True pane eats the whole area.
 
         editor_frame = ttk.Frame(right)
         self.line_numbers = tk.Text(
@@ -468,6 +483,22 @@ class QueryTab:
         results_frame.columnconfigure(0, weight=1)
         right.add(results_frame, weight=2)
 
+        log_frame = ttk.Frame(right_outer)
+        log_frame.pack(side="bottom", fill="x")
+        ttk.Label(log_frame, text="Messages:", anchor="w").pack(side="top", fill="x", padx=6, pady=(4, 0))
+        log_body = ttk.Frame(log_frame)
+        log_body.pack(side="top", fill="x")
+        self.status_log = tk.Text(
+            log_body, height=5, wrap="none", state="disabled",
+            font=("Consolas", 9), relief="flat", padx=6, pady=2,
+        )
+        self.status_log.pack(side="left", fill="both", expand=True)
+        log_scroll = ttk.Scrollbar(log_body, orient="vertical", command=self.status_log.yview)
+        log_scroll.pack(side="right", fill="y")
+        self.status_log.configure(yscrollcommand=log_scroll.set)
+
+        right.pack(side="top", fill="both", expand=True)
+
     def apply_word_wrap(self, enabled):
         self.editor.configure(wrap="word" if enabled else "none")
 
@@ -483,14 +514,17 @@ class QueryTab:
             ln_bg, ln_fg = "#252526", "#6e7681"
             kw_c, str_c, comment_c, num_c = "#569cd6", "#ce9178", "#6a9955", "#b5cea8"
             sheet_theme = "dark blue"
+            log_bg, log_fg = "#1e1e1e", "#cccccc"
         else:
             editor_bg, editor_fg, editor_insert = "#ffffff", "#000000", "black"
             ln_bg, ln_fg = "#f0f0f0", "#000000"
             kw_c, str_c, comment_c, num_c = "#0000cc", "#a31515", "#008000", "#098658"
             sheet_theme = "light blue"
+            log_bg, log_fg = "#f5f5f5", "#333333"
 
         self.editor.configure(background=editor_bg, foreground=editor_fg, insertbackground=editor_insert)
         self.line_numbers.configure(background=ln_bg, foreground=ln_fg)
+        self.status_log.configure(background=log_bg, foreground=log_fg)
         self.editor.tag_configure("kw", foreground=kw_c, font=("Consolas", 11, "bold"))
         self.editor.tag_configure("str", foreground=str_c)
         self.editor.tag_configure("comment", foreground=comment_c)
@@ -499,6 +533,13 @@ class QueryTab:
             self.results_sheet.change_theme(sheet_theme)
         except Exception:
             pass
+
+    def _log_message(self, text):
+        line = f"[{time.strftime('%H:%M:%S')}] {text}\n"
+        self.status_log.configure(state="normal")
+        self.status_log.insert("end", line)
+        self.status_log.see("end")
+        self.status_log.configure(state="disabled")
 
     # ---------- editor scroll / line numbers ----------
 
@@ -530,6 +571,15 @@ class QueryTab:
         self.editor.bind("<Escape>", self._on_escape)
         self.editor.bind("<ButtonPress-1>", lambda e: self.autocomplete.hide())
         self.editor.bind("<<Modified>>", self._on_modified_flag)
+
+        # Tk's Text widget has built-in Emacs-style bindings for Control-o
+        # (insert newline), Control-t (transpose chars), and Control-k
+        # (delete to end of line) that would otherwise fire — and silently
+        # mutate the buffer — before our own shortcuts for Open/New Tab/
+        # Connect get a chance to run.
+        self.editor.bind("<Control-o>", lambda e: (self.app.open_file(), "break")[1])
+        self.editor.bind("<Control-t>", lambda e: (self.app.new_tab(), "break")[1])
+        self.editor.bind("<Control-k>", lambda e: (self.app._dispatch("open_connect_dialog"), "break")[1])
 
     def _on_modified_flag(self, event):
         modified = self.editor.edit_modified()
@@ -1175,6 +1225,9 @@ class QueryTab:
         if self.backend is None or not self.backend.is_connected:
             messagebox.showinfo("Not connected", "Connect to a database first.")
             return
+        if self._query_running:
+            self.app.set_status(self, "A query is already running.")
+            return
         try:
             sel_start, sel_end = self.editor.index("sel.first"), self.editor.index("sel.last")
             sql = self.editor.get(sel_start, sel_end)
@@ -1187,15 +1240,24 @@ class QueryTab:
 
         self.app.set_status(self, "Running query...")
         started = time.monotonic()
+        self._query_running = True
+        self._cancel_requested = False
+        self.app._sync_chrome_if_active(self)
 
         def work():
             return self.backend.execute(sql)
 
         def done(result, error):
+            self._query_running = False
+            self.app._sync_chrome_if_active(self)
             elapsed_ms = (time.monotonic() - started) * 1000
+            print(f"[run_query] done after {elapsed_ms:.0f}ms, error={error!r}, cancel_requested={self._cancel_requested}")
             if error is not None:
-                self.app.set_status(self, f"Error after {elapsed_ms:.0f} ms.")
-                messagebox.showerror("Query error", str(error))
+                if self._cancel_requested:
+                    self.app.set_status(self, f"Query cancelled after {elapsed_ms:.0f} ms.")
+                else:
+                    self.app.set_status(self, f"Error after {elapsed_ms:.0f} ms.")
+                    messagebox.showerror("Query error", str(error))
                 return
             columns, rows = result
             if columns is None:
@@ -1212,6 +1274,28 @@ class QueryTab:
                 f"{len(rows)} row(s) returned ({elapsed_ms:.0f} ms)"
                 + (f" — showing first {shown}" if truncated else ""),
             )
+
+        self._run_async(work, done)
+
+    def cancel_query(self):
+        if not self._query_running or self.backend is None:
+            return
+        self._cancel_requested = True
+        self.app.set_status(self, "Sending cancel request...")
+
+        backend = self.backend
+
+        def work():
+            return backend.cancel()
+
+        def done(result, error):
+            print(f"[cancel] backend.cancel() -> result={result!r} error={error!r}")
+            if error is not None:
+                self.app.set_status(self, f"Cancel request errored: {error}")
+            elif not result:
+                self.app.set_status(self, "Cancel request failed — query may still be running.")
+            elif self._query_running:
+                self.app.set_status(self, "Cancel request sent — waiting for the server to stop the query...")
 
         self._run_async(work, done)
 
@@ -1253,6 +1337,32 @@ class QueryTab:
                 cells=null_cells, bg="#d9d9d9", fg="#999999", redraw=False
             )
         self.results_sheet.redraw()
+
+    def export_csv(self):
+        headers = self.results_sheet.headers()
+        data = self.results_sheet.get_sheet_data()
+        if not headers:
+            messagebox.showinfo("Nothing to export", "Run a query that returns rows first.")
+            return
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"{self.title}.csv",
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                writer.writerows(data)
+        except Exception as exc:
+            messagebox.showerror("Export failed", str(exc))
+            return
+
+        self.app.set_status(self, f"Exported {len(data)} row(s) to {path}")
 
     # ---------- async helper ----------
 
@@ -1315,7 +1425,6 @@ class NotepaDBApp:
         self.root.title("notepaDB — scratchpad for databases")
         self.root.geometry("1200x780")
 
-        self.status_var = tk.StringVar(value="Ready.")
         self.tabs = []
         self._tab_for_frame = {}
         self._tab_counter = 0
@@ -1332,7 +1441,6 @@ class NotepaDBApp:
         self._build_menu()
         self._build_toolbar()
         self._build_notebook()
-        self._build_statusbar()
 
         self.new_tab()
         self._apply_global_ttk_theme()
@@ -1356,10 +1464,7 @@ class NotepaDBApp:
             getattr(tab, method_name)(*args)
 
     def set_status(self, tab, message):
-        if self.active_tab is tab:
-            self.status_var.set(message)
-        else:
-            self.status_var.set(f"[{tab.title}] {message}")
+        tab._log_message(message)
 
     def _sync_chrome_if_active(self, tab):
         if self.active_tab is tab:
@@ -1371,6 +1476,9 @@ class NotepaDBApp:
             return
         text, color = tab.connection_label()
         self.conn_label.configure(text=text, foreground=color)
+        running = tab._query_running
+        self.run_btn.configure(state="disabled" if running else "normal")
+        self.cancel_btn.configure(state="normal" if running else "disabled")
 
     # ---------- options ----------
 
@@ -1489,6 +1597,9 @@ class NotepaDBApp:
 
         query_menu = tk.Menu(menubar, tearoff=0)
         query_menu.add_command(label="Run", command=lambda: self._dispatch("run_query"), accelerator="F5")
+        query_menu.add_command(label="Cancel", command=lambda: self._dispatch("cancel_query"), accelerator="Ctrl+Break")
+        query_menu.add_separator()
+        query_menu.add_command(label="Export Results to CSV...", command=lambda: self._dispatch("export_csv"))
         menubar.add_cascade(label="Query", menu=query_menu)
 
         options_menu = tk.Menu(menubar, tearoff=0)
@@ -1519,6 +1630,7 @@ class NotepaDBApp:
         self.root.bind("<Control-s>", lambda e: self._dispatch("save_file"))
         self.root.bind("<Control-k>", lambda e: self._dispatch("open_connect_dialog"))
         self.root.bind("<F5>", lambda e: self._dispatch("run_query"))
+        self.root.bind("<Control-Cancel>", lambda e: self._dispatch("cancel_query"))
         self.root.bind("<Control-f>", lambda e: self._dispatch("open_find_dialog"))
         self.root.bind("<Control-h>", lambda e: self._dispatch("open_replace_dialog"))
         self.root.bind("<F3>", lambda e: self._dispatch("find_next"))
@@ -1527,13 +1639,10 @@ class NotepaDBApp:
     def _build_toolbar(self):
         bar = ttk.Frame(self.root)
         bar.pack(side="top", fill="x")
-        ttk.Button(bar, text="New Tab", command=self.new_tab).pack(side="left", padx=4, pady=4)
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
-        ttk.Button(bar, text="Connect...", command=lambda: self._dispatch("open_connect_dialog")).pack(side="left", padx=4, pady=4)
-        ttk.Button(bar, text="Disconnect", command=lambda: self._dispatch("disconnect")).pack(side="left", padx=4, pady=4)
-        ttk.Button(bar, text="Refresh Schema", command=lambda: self._dispatch("refresh_schema")).pack(side="left", padx=4, pady=4)
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6, pady=4)
-        ttk.Button(bar, text="Run  (F5)", command=lambda: self._dispatch("run_query")).pack(side="left", padx=4, pady=4)
+        self.run_btn = ttk.Button(bar, text="Run  (F5)", command=lambda: self._dispatch("run_query"))
+        self.run_btn.pack(side="left", padx=4, pady=4)
+        self.cancel_btn = ttk.Button(bar, text="Cancel", command=lambda: self._dispatch("cancel_query"), state="disabled")
+        self.cancel_btn.pack(side="left", padx=4, pady=4)
 
         self.conn_label = ttk.Label(bar, text="Not connected", foreground="#b00020")
         self.conn_label.pack(side="right", padx=10)
@@ -1543,11 +1652,6 @@ class NotepaDBApp:
         self.notebook.pack(side="top", fill="both", expand=True)
         self.notebook.bind("<<NotebookTabChanged>>", lambda e: self._sync_chrome())
         self.notebook.bind("<Button-3>", self._on_tab_right_click)
-
-    def _build_statusbar(self):
-        bar = ttk.Frame(self.root)
-        bar.pack(side="bottom", fill="x")
-        ttk.Label(bar, textvariable=self.status_var, anchor="w").pack(side="left", fill="x", expand=True, padx=6, pady=2)
 
     # ---------- tab management ----------
 
@@ -1621,13 +1725,40 @@ class NotepaDBApp:
     # ---------- misc ----------
 
     def _show_about(self):
-        messagebox.showinfo(
-            "About notepaDB",
-            "notepaDB — a notepad, but only for databases.\n\n"
-            "Type SQL, autocomplete real table/column names, run it.\n\n"
-            "Each tab is an independent session with its own connection.\n\n"
-            "Supported engines: SQL Server, PostgreSQL, MySQL/MariaDB.",
+        dlg = tk.Toplevel(self.root)
+        dlg.title("About notepaDB")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+
+        frame = ttk.Frame(dlg)
+        frame.pack(fill="both", expand=True, padx=20, pady=16)
+        ttk.Label(
+            frame,
+            text=(
+                "notepaDB — a notepad, but only for databases.\n\n"
+                "Type SQL, autocomplete real table/column names, run it.\n\n"
+                "Each tab is an independent session with its own connection.\n\n"
+                "Supported engines: SQL Server, PostgreSQL, MySQL/MariaDB."
+            ),
+            justify="left",
+        ).pack(anchor="w")
+
+        link = ttk.Label(
+            frame, text="☕  Buy me a coffee", foreground="#1a73e8", cursor="hand2",
+            font=("Segoe UI", 9, "underline"),
         )
+        link.pack(anchor="w", pady=(16, 0))
+        link.bind("<Button-1>", lambda e: webbrowser.open("https://ko-fi.com/drormaor"))
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill="x", pady=(16, 0))
+        close_btn = ttk.Button(btn_frame, text="Close", command=dlg.destroy)
+        close_btn.pack(side="right")
+
+        dlg.bind("<Return>", lambda e: dlg.destroy())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.after_idle(close_btn.focus_set)
+        dlg.grab_set()
 
     def _on_close(self):
         for tab in self.tabs:
