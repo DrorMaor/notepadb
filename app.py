@@ -57,6 +57,24 @@ def save_config(cfg):
         pass
 
 
+# Encodings to try in order when loading a file of unknown origin. cp1255 is
+# the Windows "ANSI" codepage on Hebrew-locale machines, so .sql files saved
+# by Notepad/SSMS there often aren't valid UTF-8 (e.g. Hebrew text like
+# "לסניצקי" raises UnicodeDecodeError under strict utf-8).
+FALLBACK_ENCODINGS = ["utf-8-sig", "utf-8", "cp1255", "cp1252"]
+
+
+def read_text_file(path):
+    with open(path, "rb") as f:
+        raw = f.read()
+    for encoding in FALLBACK_ENCODINGS:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def _with_recent(history, value, limit=10):
     value = value.strip()
     if not value:
@@ -960,8 +978,7 @@ class QueryTab:
     # ---------- file operations ----------
 
     def load_file(self, path):
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = read_text_file(path)
         self.editor.delete("1.0", "end")
         self.editor.insert("1.0", content)
         self.current_file = path
