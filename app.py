@@ -1,26 +1,26 @@
 """
 notepadb — a notepad/scratchpad, but only for databases.
 
-Type SQL, get autocomplete for real table/column names from the server
-you're connected to, run it, see results. SQL Server, PostgreSQL, and
-MySQL/MariaDB are all supported via db_backends.py.
+Type SQL, get autocomplete for real table/column names from the server you're connected to, run it, see results. 
+SQL Server, PostgreSQL, MySQL/MariaDB, Oracle, and SQLite are all supported via db_backends.py.
 
-Tabs are independent sessions (like SSMS query windows): each tab has its
-own connection, schema browser, and results grid.
+Tabs are independent sessions (like SSMS query windows): each tab has its own connection, schema browser, and results grid.
 
 Run with:  py app.py
 """
 
 import csv
+import glob
 import json
 import os
+import sys
 import webbrowser
 import queue
 import re
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 from tkinter import font as tkfont
 
 from tksheet import Sheet
@@ -28,8 +28,18 @@ from tksheet import Sheet
 from db_backends import BACKENDS, BackendError
 from autocomplete import get_suggestions, SQL_KEYWORDS
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# When frozen by PyInstaller, __file__ points into a temp extraction dir that
+# changes every launch (onefile mode), so config saved there would never
+# persist. Use the .exe's own directory instead in that case.
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, ".notepadb_config.json")
+HISTORY_PATH = os.path.join(APP_DIR, ".notepadb_history.json")
+HISTORY_LIMIT = 300
+SESSION_PATH = os.path.join(APP_DIR, ".notepadb_session.json")
+AUTOSAVE_DIR = os.path.join(APP_DIR, ".notepadb_autosave")
 
 KEYWORD_PATTERN = re.compile(
     r"\b(" + "|".join(sorted({kw.split()[0] for kw in SQL_KEYWORDS}, key=len, reverse=True)) + r")\b",
@@ -39,6 +49,32 @@ STRING_PATTERN = re.compile(r"'(?:[^'\\]|\\.)*'")
 LINE_COMMENT_PATTERN = re.compile(r"--.*")
 BLOCK_COMMENT_PATTERN = re.compile(r"/\*.*?\*/", re.DOTALL)
 NUMBER_PATTERN = re.compile(r"\b\d+(\.\d+)?\b")
+BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}
+BRACKET_PAIRS_REVERSE = {v: k for k, v in BRACKET_PAIRS.items()}
+
+
+def _find_bracket_match(text, idx, open_ch, close_ch, forward):
+    """Depth-counting scan for `idx`'s partner bracket. Doesn't special-case
+    brackets inside string literals/comments — a minor cosmetic miss, not a
+    correctness issue, since this only drives a highlight, nothing runs."""
+    depth = 0
+    if forward:
+        for i in range(idx, len(text)):
+            if text[i] == open_ch:
+                depth += 1
+            elif text[i] == close_ch:
+                depth -= 1
+                if depth == 0:
+                    return i
+    else:
+        for i in range(idx, -1, -1):
+            if text[i] == close_ch:
+                depth += 1
+            elif text[i] == open_ch:
+                depth -= 1
+                if depth == 0:
+                    return i
+    return None
 
 
 def load_config():
@@ -55,6 +91,130 @@ def save_config(cfg):
             json.dump(cfg, f, indent=2)
     except Exception:
         pass
+
+
+def load_history():
+    try:
+        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_history(history):
+    try:
+        with open(HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(history[:HISTORY_LIMIT], f, indent=2)
+    except Exception:
+        pass
+
+
+def load_session():
+    try:
+        with open(SESSION_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_session(tabs_state):
+    try:
+        with open(SESSION_PATH, "w", encoding="utf-8") as f:
+            json.dump(tabs_state, f, indent=2)
+    except Exception:
+        pass
+
+
+def _autosave_path(tab_index):
+    return os.path.join(AUTOSAVE_DIR, f"tab_{tab_index}.sql")
+
+
+def _list_autosave_files():
+    try:
+        return sorted(glob.glob(os.path.join(AUTOSAVE_DIR, "tab_*.sql")))
+    except Exception:
+        return []
+
+
+def record_history(sql, elapsed_ms, rows, connection_label):
+    history = load_history()
+    history.insert(0, {
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "sql": sql,
+        "elapsed_ms": round(elapsed_ms),
+        "rows": rows,
+        "connection": connection_label,
+    })
+    save_history(history)
+
+
+def split_statements(sql):
+    """Split a batch on ';' while skipping over string literals and
+    comments, so a semicolon inside a quoted string or a comment doesn't
+    split a statement in half."""
+    statements = []
+    buf = []
+    i, n = 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch == "'":
+            m = STRING_PATTERN.match(sql, i)
+            if m:
+                buf.append(sql[i:m.end()])
+                i = m.end()
+                continue
+        if sql.startswith("--", i):
+            end = sql.find("\n", i)
+            end = n if end == -1 else end
+            buf.append(sql[i:end])
+            i = end
+            continue
+        if sql.startswith("/*", i):
+            end = sql.find("*/", i)
+            end = n if end == -1 else end + 2
+            buf.append(sql[i:end])
+            i = end
+            continue
+        if ch == ";":
+            stmt = "".join(buf).strip()
+            if stmt:
+                statements.append(stmt)
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
+
+def _sql_snippet(sql, limit=80):
+    snippet = " ".join(sql.split())
+    return snippet if len(snippet) <= limit else snippet[:limit - 1] + "…"
+
+
+def _quote_ident(name):
+    return f'"{name}"'
+
+
+ENGINE_DISPLAY_NAMES = {
+    "sqlserver": "SQL Server",
+    "postgres": "PostgreSQL",
+    "mysql": "MySQL / MariaDB",
+    "oracle": "Oracle",
+    "sqlite": "SQLite",
+}
+
+
+def _quote_table_key(table_key):
+    """`table_key` is whatever list_schema() used as a key — 'schema.table'
+    or a bare table name — quote whichever parts it has."""
+    if "." in table_key:
+        schema, table = table_key.split(".", 1)
+        return f"{_quote_ident(schema)}.{_quote_ident(table)}"
+    return _quote_ident(table_key)
 
 
 # Encodings to try in order when loading a file of unknown origin. cp1255 is
@@ -205,76 +365,95 @@ class ConnectDialog(tk.Toplevel):
         )
         engine_box.grid(row=row, column=1, sticky="w", **pad)
 
-        def fmt_engine(name):
-            return {
-                "sqlserver": "SQL Server",
-                "postgres": "PostgreSQL",
-                "mysql": "MySQL / MariaDB",
-            }[name]
-
         # Show friendly labels but keep engine keys underneath.
-        self._engine_display_map = {fmt_engine(k): k for k in ["sqlserver", "postgres", "mysql"]}
+        self._engine_display_map = {v: k for k, v in ENGINE_DISPLAY_NAMES.items()}
         engine_box["values"] = list(self._engine_display_map.keys())
-        self._engine_display_var.set(fmt_engine(self.engine_var.get()))
+        self._engine_display_var.set(ENGINE_DISPLAY_NAMES[self.engine_var.get()])
 
         def on_engine_pick(event=None):
             display = self._engine_display_var.get()
             self.engine_var.set(self._engine_display_map[display])
+            self._sync_engine_fields()
 
         engine_box.bind("<<ComboboxSelected>>", on_engine_pick)
         row += 1
 
-        ttk.Label(frame, text="Server:").grid(row=row, column=0, sticky="e", **pad)
+        ttk.Label(frame, text="Saved Connection:").grid(row=row, column=0, sticky="e", **pad)
+        self.saved_var = tk.StringVar()
+        saved_row = ttk.Frame(frame)
+        saved_row.grid(row=row, column=1, sticky="w", **pad)
+        self._saved_profiles = defaults.get("saved_connections", {})
+        self.saved_box = ttk.Combobox(
+            saved_row, textvariable=self.saved_var, state="readonly", width=18,
+            values=sorted(self._saved_profiles.keys()),
+        )
+        self.saved_box.pack(side="left")
+        self.saved_box.bind("<<ComboboxSelected>>", self._on_saved_pick)
+        ttk.Button(saved_row, text="Save As...", width=9, command=self._save_connection_profile).pack(side="left", padx=(4, 0))
+        ttk.Button(saved_row, text="Delete", width=7, command=self._delete_connection_profile).pack(side="left", padx=(4, 0))
+        row += 1
+
+        self.server_label = ttk.Label(frame, text="Server:")
+        self.server_label.grid(row=row, column=0, sticky="e", **pad)
         self.server_var = tk.StringVar(value=defaults.get("server", "localhost"))
-        server_box = ttk.Combobox(
-            frame, textvariable=self.server_var, width=28,
+        server_row = ttk.Frame(frame)
+        server_row.grid(row=row, column=1, sticky="w", **pad)
+        self.server_box = ttk.Combobox(
+            server_row, textvariable=self.server_var, width=28,
             values=defaults.get("recent_servers", []),
         )
-        server_box.grid(row=row, column=1, sticky="w", **pad)
+        self.server_box.pack(side="left")
+        self.browse_btn = ttk.Button(server_row, text="Browse...", width=9, command=self._browse_file)
         row += 1
 
-        ttk.Label(frame, text="Port (optional):").grid(row=row, column=0, sticky="e", **pad)
+        self.port_label = ttk.Label(frame, text="Port (optional):")
+        self.port_label.grid(row=row, column=0, sticky="e", **pad)
         self.port_var = tk.StringVar(value=defaults.get("port", ""))
-        ttk.Entry(frame, textvariable=self.port_var, width=30).grid(row=row, column=1, sticky="w", **pad)
+        self.port_entry = ttk.Entry(frame, textvariable=self.port_var, width=30)
+        self.port_entry.grid(row=row, column=1, sticky="w", **pad)
         row += 1
 
-        ttk.Label(frame, text="Database (optional):").grid(row=row, column=0, sticky="e", **pad)
+        self.database_label = ttk.Label(frame, text="Database (optional):")
+        self.database_label.grid(row=row, column=0, sticky="e", **pad)
         self.database_var = tk.StringVar(value=defaults.get("database", ""))
-        database_box = ttk.Combobox(
+        self.database_box = ttk.Combobox(
             frame, textvariable=self.database_var, width=28,
             values=defaults.get("recent_databases", []),
         )
-        database_box.grid(row=row, column=1, sticky="w", **pad)
+        self.database_box.grid(row=row, column=1, sticky="w", **pad)
         row += 1
 
-        ttk.Label(frame, text="Authentication:").grid(row=row, column=0, sticky="e", **pad)
+        self.auth_label = ttk.Label(frame, text="Authentication:")
+        self.auth_label.grid(row=row, column=0, sticky="e", **pad)
         self.auth_var = tk.StringVar(value=defaults.get("auth_mode", "windows"))
-        auth_frame = ttk.Frame(frame)
-        auth_frame.grid(row=row, column=1, sticky="w", **pad)
-        ttk.Radiobutton(auth_frame, text="Windows", variable=self.auth_var, value="windows",
+        self.auth_frame = ttk.Frame(frame)
+        self.auth_frame.grid(row=row, column=1, sticky="w", **pad)
+        ttk.Radiobutton(self.auth_frame, text="Windows", variable=self.auth_var, value="windows",
                         command=self._sync_auth_fields).pack(side="left")
-        ttk.Radiobutton(auth_frame, text="SQL Login", variable=self.auth_var, value="sql",
+        ttk.Radiobutton(self.auth_frame, text="SQL Login", variable=self.auth_var, value="sql",
                         command=self._sync_auth_fields).pack(side="left")
         row += 1
 
-        ttk.Label(frame, text="Username:").grid(row=row, column=0, sticky="e", **pad)
+        self.username_label = ttk.Label(frame, text="Username:")
+        self.username_label.grid(row=row, column=0, sticky="e", **pad)
         self.username_var = tk.StringVar(value=defaults.get("username", ""))
         self.username_entry = ttk.Entry(frame, textvariable=self.username_var, width=30)
         self.username_entry.grid(row=row, column=1, sticky="w", **pad)
         row += 1
 
-        ttk.Label(frame, text="Password:").grid(row=row, column=0, sticky="e", **pad)
+        self.password_label = ttk.Label(frame, text="Password:")
+        self.password_label.grid(row=row, column=0, sticky="e", **pad)
         self.password_var = tk.StringVar(value="")
         self.password_entry = ttk.Entry(frame, textvariable=self.password_var, width=30, show="*")
         self.password_entry.grid(row=row, column=1, sticky="w", **pad)
         row += 1
 
-        opts_frame = ttk.Frame(frame)
-        opts_frame.grid(row=row, column=1, sticky="w", **pad)
+        self.opts_frame = ttk.Frame(frame)
+        self.opts_frame.grid(row=row, column=1, sticky="w", **pad)
         self.encrypt_var = tk.BooleanVar(value=defaults.get("encrypt", True))
         self.trust_var = tk.BooleanVar(value=defaults.get("trust_cert", True))
-        ttk.Checkbutton(opts_frame, text="Encrypt", variable=self.encrypt_var).pack(side="left")
-        ttk.Checkbutton(opts_frame, text="Trust server certificate", variable=self.trust_var).pack(side="left")
+        ttk.Checkbutton(self.opts_frame, text="Encrypt", variable=self.encrypt_var).pack(side="left")
+        ttk.Checkbutton(self.opts_frame, text="Trust server certificate", variable=self.trust_var).pack(side="left")
         row += 1
 
         self.status_label = ttk.Label(frame, text="", foreground="#b00020")
@@ -288,6 +467,7 @@ class ConnectDialog(tk.Toplevel):
         ttk.Button(btn_frame, text="Cancel", command=self._cancel).pack(side="left", padx=4)
 
         self._sync_auth_fields()
+        self._sync_engine_fields()
         self.bind("<Return>", lambda e: self._connect())
         # focus_set() before the window is actually mapped doesn't stick —
         # defer it until after the Toplevel has appeared on screen.
@@ -299,12 +479,115 @@ class ConnectDialog(tk.Toplevel):
         self.username_entry.configure(state=state)
         self.password_entry.configure(state=state)
 
+    def _sync_engine_fields(self):
+        # SQLite is a local file, not a client/server connection — swap the
+        # "Server" field for a file picker and hide everything that only
+        # makes sense for a networked engine (port, auth, credentials, TLS).
+        is_sqlite = self.engine_var.get() == "sqlite"
+        self.server_label.configure(text="File path:" if is_sqlite else "Server:")
+        if is_sqlite:
+            self.browse_btn.pack(side="left", padx=(4, 0))
+        else:
+            self.browse_btn.pack_forget()
+
+        hideable = [
+            self.port_label, self.port_entry, self.database_label, self.database_box,
+            self.auth_label, self.auth_frame, self.username_label, self.username_entry,
+            self.password_label, self.password_entry, self.opts_frame,
+        ]
+        for widget in hideable:
+            if is_sqlite:
+                widget.grid_remove()
+            else:
+                widget.grid()
+        if not is_sqlite:
+            self._sync_auth_fields()
+
+    def _browse_file(self):
+        path = filedialog.askopenfilename(
+            title="Select SQLite database file",
+            filetypes=[("SQLite database", "*.db *.sqlite *.sqlite3 *.db3"), ("All files", "*.*")],
+        )
+        if path:
+            self.server_var.set(path)
+
+    def _on_saved_pick(self, event=None):
+        profile = self._saved_profiles.get(self.saved_var.get())
+        if not profile:
+            return
+        self.engine_var.set(profile.get("engine", "sqlserver"))
+        self._engine_display_var.set(ENGINE_DISPLAY_NAMES[self.engine_var.get()])
+        self.server_var.set(profile.get("server", ""))
+        self.port_var.set(profile.get("port") or "")
+        self.database_var.set(profile.get("database") or "")
+        self.auth_var.set(profile.get("auth_mode", "windows"))
+        self.username_var.set(profile.get("username", ""))
+        self.encrypt_var.set(profile.get("encrypt", True))
+        self.trust_var.set(profile.get("trust_cert", True))
+        self._sync_engine_fields()
+
+    def _save_connection_profile(self):
+        name = simpledialog.askstring("Save Connection", "Name for this connection:", parent=self)
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        cfg = load_config()
+        profiles = cfg.setdefault("saved_connections", {})
+        profiles[name] = {
+            "engine": self.engine_var.get(),
+            "server": self.server_var.get().strip(),
+            "port": self.port_var.get().strip() or None,
+            "database": self.database_var.get().strip() or None,
+            "auth_mode": self.auth_var.get(),
+            "username": self.username_var.get().strip(),
+            "encrypt": self.encrypt_var.get(),
+            "trust_cert": self.trust_var.get(),
+        }
+        save_config(cfg)
+        self._saved_profiles = profiles
+        self.saved_box["values"] = sorted(profiles.keys())
+        self.saved_var.set(name)
+        self.status_label.configure(text=f"Saved '{name}'.", foreground="#0a7a0a")
+
+    def _delete_connection_profile(self):
+        name = self.saved_var.get()
+        if not name or name not in self._saved_profiles:
+            return
+        if not messagebox.askyesno("Delete connection", f"Delete saved connection '{name}'?"):
+            return
+        cfg = load_config()
+        profiles = cfg.get("saved_connections", {})
+        profiles.pop(name, None)
+        save_config(cfg)
+        self._saved_profiles = profiles
+        self.saved_box["values"] = sorted(profiles.keys())
+        self.saved_var.set("")
+        self.status_label.configure(text=f"Deleted '{name}'.", foreground="#b00020")
+
     def _cancel(self):
         self.result = None
         self.destroy()
 
     def _connect(self):
         engine = self.engine_var.get()
+        if engine == "sqlite":
+            file_path = self.server_var.get().strip()
+            if not file_path:
+                self.status_label.configure(text="File path is required.")
+                return
+            self.result = {
+                "engine": engine,
+                "server": file_path,
+                "port": None,
+                "database": os.path.basename(file_path),
+                "auth_mode": "windows",
+                "username": "",
+                "password": "",
+                "encrypt": True,
+                "trust_cert": True,
+            }
+            self.destroy()
+            return
         if not self.server_var.get().strip():
             self.status_label.configure(text="Server is required.")
             return
@@ -372,6 +655,75 @@ class FindDialog(tk.Toplevel):
         self.replace_entry.select_range(0, "end")
 
 
+class HistoryDialog(tk.Toplevel):
+    """Non-modal browser over every successfully-run statement, newest
+    first. Double-click (or Insert) drops it into the active tab's editor;
+    Insert & Run also executes it immediately."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Query History")
+        self.geometry("760x420")
+        self.transient(app.root)
+        self.history = load_history()
+        self._build()
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _build(self):
+        columns = ("time", "elapsed", "rows", "connection", "sql")
+        self.tree = ttk.Treeview(self, columns=columns, show="headings")
+        headers = {
+            "time": ("Time", 140), "elapsed": ("ms", 70), "rows": ("Rows", 70),
+            "connection": ("Connection", 160), "sql": ("SQL", 320),
+        }
+        for key, (text, width) in headers.items():
+            self.tree.heading(key, text=text)
+            self.tree.column(key, width=width, anchor="w" if key in ("time", "connection", "sql") else "e")
+        self.tree.pack(side="top", fill="both", expand=True, padx=8, pady=8)
+        self._populate()
+        self.tree.bind("<Double-Button-1>", lambda e: self._insert_selected())
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(side="bottom", fill="x", padx=8, pady=(0, 8))
+        ttk.Button(btn_frame, text="Insert", command=self._insert_selected).pack(side="left")
+        ttk.Button(btn_frame, text="Insert && Run", command=lambda: self._insert_selected(run=True)).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="Clear History", command=self._clear).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side="right")
+
+    def _populate(self):
+        self.tree.delete(*self.tree.get_children())
+        for entry in self.history:
+            self.tree.insert("", "end", values=(
+                entry.get("time", ""), entry.get("elapsed_ms", ""), entry.get("rows", ""),
+                entry.get("connection", ""), _sql_snippet(entry.get("sql", ""), limit=120),
+            ))
+
+    def _selected_entry(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        idx = self.tree.index(sel[0])
+        return self.history[idx] if idx < len(self.history) else None
+
+    def _insert_selected(self, run=False):
+        entry = self._selected_entry()
+        if entry is None:
+            return
+        tab = self.app.active_tab
+        if tab is None:
+            return
+        tab._insert_and_run(entry["sql"]) if run else tab._insert_text(entry["sql"])
+        self.destroy()
+
+    def _clear(self):
+        if not messagebox.askyesno("Clear history", "Delete all saved query history?"):
+            return
+        save_history([])
+        self.history = []
+        self._populate()
+
+
 class QueryTab:
     """One independent session: own connection, schema browser, editor and
     results grid. Conceptually the same as one SSMS query window."""
@@ -387,6 +739,7 @@ class QueryTab:
 
         self.backend = None
         self.connected_server = None
+        self._last_auth_mode = "windows"
         self.databases = []  # all database names on the connected server
         self.db_schema_cache = {}  # db_name -> {'schema.table': [(col, type), ...]}
         self.active_database = None  # db the connection is USE'd into, for Run/autocomplete
@@ -483,22 +836,15 @@ class QueryTab:
         right.add(editor_frame, weight=3)
 
         results_frame = ttk.Frame(right)
-        self.results_sheet = Sheet(
-            results_frame,
-            headers=[],
-            data=[],
-            font=("Consolas", 10, "normal"),
-            header_font=("Consolas", 10, "bold"),
-            theme="light blue",
-        )
-        self.results_sheet.enable_bindings(
-            "single_select", "row_select", "column_select", "arrowkeys",
-            "copy", "select_all", "column_width_resize", "double_click_column_resize",
-            "rc_select",
-        )
-        self.results_sheet.grid(row=0, column=0, sticky="nsew")
+        # A batch can contain several statements, each producing its own
+        # result set — one tab per result set, so none of them get clobbered
+        # by the next.
+        self.results_notebook = ttk.Notebook(results_frame)
+        self.results_notebook.grid(row=0, column=0, sticky="nsew")
         results_frame.rowconfigure(0, weight=1)
         results_frame.columnconfigure(0, weight=1)
+        self._result_sheets = []
+        self._add_placeholder_result_tab()
         right.add(results_frame, weight=2)
 
         log_frame = ttk.Frame(right_outer)
@@ -547,10 +893,14 @@ class QueryTab:
         self.editor.tag_configure("str", foreground=str_c)
         self.editor.tag_configure("comment", foreground=comment_c)
         self.editor.tag_configure("num", foreground=num_c)
-        try:
-            self.results_sheet.change_theme(sheet_theme)
-        except Exception:
-            pass
+        self.editor.tag_configure("bracket", background="#808080" if dark else "#c0c0c0")
+        self.editor.tag_raise("bracket")
+        self._sheet_theme = sheet_theme
+        for sheet in self._result_sheets:
+            try:
+                sheet.change_theme(sheet_theme)
+            except Exception:
+                pass
 
     def _log_message(self, text):
         line = f"[{time.strftime('%H:%M:%S')}] {text}\n"
@@ -588,7 +938,9 @@ class QueryTab:
         self.editor.bind("<Tab>", self._on_tab)
         self.editor.bind("<Escape>", self._on_escape)
         self.editor.bind("<ButtonPress-1>", lambda e: self.autocomplete.hide())
+        self.editor.bind("<ButtonRelease-1>", lambda e: self._update_bracket_match(), add="+")
         self.editor.bind("<<Modified>>", self._on_modified_flag)
+        self.editor.bind("<Control-slash>", self.toggle_comment)
 
         # Tk's Text widget has built-in Emacs-style bindings for Control-o
         # (insert newline), Control-t (transpose chars), and Control-k
@@ -612,10 +964,12 @@ class QueryTab:
 
     def _on_editor_key_release(self, event):
         if event.keysym in ("Up", "Down", "Return", "Tab", "Escape", "Shift_L", "Shift_R", "Control_L", "Control_R"):
+            self._update_bracket_match()
             return
         self.highlight_syntax()
         self._update_line_numbers()
         self.autocomplete.update_suggestions()
+        self._update_bracket_match()
 
     def _on_return(self, event):
         if self.autocomplete.visible():
@@ -657,6 +1011,51 @@ class QueryTab:
         mark(LINE_COMMENT_PATTERN, "comment")
         mark(BLOCK_COMMENT_PATTERN, "comment")
 
+    def _update_bracket_match(self):
+        self.editor.tag_remove("bracket", "1.0", "end")
+        text = self.editor.get("1.0", "end-1c")
+        cursor_offset = len(self.editor.get("1.0", tk.INSERT))
+        for pos in (cursor_offset, cursor_offset - 1):
+            if pos < 0 or pos >= len(text):
+                continue
+            ch = text[pos]
+            if ch in BRACKET_PAIRS:
+                match = _find_bracket_match(text, pos, ch, BRACKET_PAIRS[ch], forward=True)
+            elif ch in BRACKET_PAIRS_REVERSE:
+                match = _find_bracket_match(text, pos, BRACKET_PAIRS_REVERSE[ch], ch, forward=False)
+            else:
+                continue
+            if match is not None:
+                self.editor.tag_add("bracket", f"1.0+{pos}c", f"1.0+{pos + 1}c")
+                self.editor.tag_add("bracket", f"1.0+{match}c", f"1.0+{match + 1}c")
+                break
+
+    def toggle_comment(self, event=None):
+        try:
+            sel_start = self.editor.index("sel.first linestart")
+            sel_end = self.editor.index("sel.last lineend")
+            has_selection = True
+        except tk.TclError:
+            sel_start = self.editor.index("insert linestart")
+            sel_end = self.editor.index("insert lineend")
+            has_selection = False
+        lines = self.editor.get(sel_start, sel_end).split("\n")
+        non_blank = [ln for ln in lines if ln.strip()]
+        all_commented = bool(non_blank) and all(ln.lstrip().startswith("--") for ln in non_blank)
+        if all_commented:
+            new_lines = [re.sub(r"^(\s*)--\s?", r"\1", ln) for ln in lines]
+        else:
+            new_lines = [("-- " + ln) if ln.strip() else ln for ln in lines]
+        new_text = "\n".join(new_lines)
+        self.editor.delete(sel_start, sel_end)
+        self.editor.insert(sel_start, new_text)
+        if has_selection:
+            self.editor.tag_remove("sel", "1.0", "end")
+            self.editor.tag_add("sel", sel_start, f"{sel_start}+{len(new_text)}c")
+        self.highlight_syntax()
+        self._update_line_numbers()
+        return "break"
+
     # ---------- schema tree ----------
 
     def populate_schema_tree(self):
@@ -685,12 +1084,14 @@ class QueryTab:
             cols = schema[table_key]  # [(col_name, type_str), ...]
             if filt and filt not in table_key.lower() and not any(filt in name.lower() for name, _ in cols):
                 continue
-            table_node = self.schema_tree.insert(db_node, "end", text=table_key, values=(table_key,), open=bool(filt))
+            table_node = self.schema_tree.insert(
+                db_node, "end", text=table_key, values=(table_key,), open=bool(filt), tags=("table",),
+            )
             for col_name, col_type in cols:
                 if filt and filt not in table_key.lower() and filt not in col_name.lower():
                     continue
                 self.schema_tree.insert(
-                    table_node, "end", text=f"{col_name}  {col_type}", values=(col_name,),
+                    table_node, "end", text=f"{col_name}  {col_type}", values=(col_name,), tags=("column",),
                 )
 
     def _on_tree_open(self, event):
@@ -766,14 +1167,121 @@ class QueryTab:
 
     def _on_tree_right_click(self, event):
         item = self.schema_tree.identify_row(event.y)
-        if not item or "database" not in self.schema_tree.item(item, "tags"):
+        if not item:
             return
+        tags = self.schema_tree.item(item, "tags")
         self.schema_tree.selection_set(item)
         self.schema_tree.focus(item)
-        db_name = self._tree_item_label(item)
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label=f"Use '{db_name}'", command=lambda: self._set_active_database(db_name))
+        if "database" in tags:
+            db_name = self._tree_item_label(item)
+            menu.add_command(label=f"Use '{db_name}'", command=lambda: self._set_active_database(db_name))
+        elif "table" in tags:
+            table_key = self.schema_tree.item(item, "values")[0]
+            menu.add_command(label="Select Top 1000 Rows", command=lambda: self._select_top_rows(table_key))
+            menu.add_command(label="Script as CREATE TABLE", command=lambda: self._script_table_ddl(table_key))
+            menu.add_command(label="Copy Column List", command=lambda: self._copy_column_list(table_key))
+            menu.add_separator()
+            menu.add_command(label="Export Table to CSV...", command=lambda: self._export_table_csv(table_key))
+        else:
+            return
         menu.tk_popup(event.x_root, event.y_root)
+
+    # ---------- table context menu actions ----------
+
+    def _cols_for_table(self, table_key):
+        if self.schema and table_key in self.schema:
+            return self.schema[table_key]
+        for db_schema in self.db_schema_cache.values():
+            if table_key in db_schema:
+                return db_schema[table_key]
+        return None
+
+    def _insert_text(self, sql):
+        """Append `sql` on its own line at the end of the buffer and select
+        it, so Run (which runs the selection if there is one) acts on just
+        this statement regardless of whatever else is in the editor."""
+        editor = self.editor
+        current = editor.get("1.0", "end-1c")
+        if current and not current.endswith("\n"):
+            editor.insert("end", "\n")
+        start_index = editor.index("end-1c")
+        editor.insert("end", sql)
+        end_index = editor.index("end-1c")
+        editor.tag_remove("sel", "1.0", "end")
+        editor.tag_add("sel", start_index, end_index)
+        editor.mark_set(tk.INSERT, end_index)
+        editor.see(end_index)
+        self.highlight_syntax()
+        self._update_line_numbers()
+
+    def _insert_and_run(self, sql):
+        self._insert_text(sql)
+        self.run_query()
+
+    def _select_top_rows(self, table_key):
+        if self.backend is None or not self.backend.is_connected:
+            return
+        self._insert_and_run(self.backend.select_top_sql(table_key))
+
+    def _script_table_ddl(self, table_key):
+        cols = self._cols_for_table(table_key)
+        if cols is None:
+            messagebox.showinfo("Not loaded", "Expand the table first so its columns are loaded.")
+            return
+        lines = ",\n".join(f"    {_quote_ident(name)} {type_str}" for name, type_str in cols)
+        ddl = f"CREATE TABLE {_quote_table_key(table_key)} (\n{lines}\n);"
+        tab = self.app.new_tab()
+        tab.editor.insert("1.0", ddl)
+        tab.set_title(f"{table_key} DDL")
+        tab._mark_clean()
+        tab.highlight_syntax()
+        tab._update_line_numbers()
+
+    def _copy_column_list(self, table_key):
+        cols = self._cols_for_table(table_key)
+        if cols is None:
+            messagebox.showinfo("Not loaded", "Expand the table first so its columns are loaded.")
+            return
+        text = ", ".join(name for name, _ in cols)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.app.set_status(self, f"Copied {len(cols)} column name(s) to clipboard.")
+
+    def _export_table_csv(self, table_key):
+        if self.backend is None or not self.backend.is_connected:
+            return
+        self.app.set_status(self, f"Exporting {table_key}...")
+
+        def work():
+            sql = self.backend.select_top_sql(table_key, limit=100000)
+            return self.backend.execute(sql)
+
+        def done(result, error):
+            if error is not None:
+                self.app.set_status(self, "Export failed.")
+                messagebox.showerror("Export failed", str(error))
+                return
+            columns, rows = result
+            path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                initialfile=f"{table_key.rsplit('.', 1)[-1]}.csv",
+            )
+            if not path:
+                self.app.set_status(self, "Export cancelled.")
+                return
+            try:
+                with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(columns)
+                    writer.writerows(rows)
+            except Exception as exc:
+                messagebox.showerror("Export failed", str(exc))
+                return
+            self.app.set_status(self, f"Exported {len(rows)} row(s) to {path}")
+
+        self._run_async(work, done)
 
     def _on_tree_hover(self, event):
         if self._drag_data and self._drag_data.get("active"):
@@ -1064,6 +1572,10 @@ class QueryTab:
             backend, databases, active_schema, params = result
             self.backend = backend
             self.connected_server = params["server"]
+            self._last_auth_mode = params["auth_mode"]
+            self._last_port = params["port"]
+            self._last_encrypt = params["encrypt"]
+            self._last_trust_cert = params["trust_cert"]
             self.databases = databases
             self.db_schema_cache = {}
             self.active_database = params["database"]
@@ -1236,22 +1748,71 @@ class QueryTab:
         self._update_line_numbers()
         self.app.set_status(self, f"Replaced {count} occurrence(s).")
 
+    # ---------- formatting ----------
+
+    def format_sql(self):
+        try:
+            import sqlparse
+        except ImportError:
+            messagebox.showerror(
+                "Missing dependency",
+                "SQL formatting requires the 'sqlparse' package.\nInstall it with: pip install sqlparse",
+            )
+            return
+        try:
+            sel_start, sel_end = self.editor.index("sel.first"), self.editor.index("sel.last")
+            has_selection = True
+        except tk.TclError:
+            sel_start, sel_end = "1.0", "end-1c"
+            has_selection = False
+        text = self.editor.get(sel_start, sel_end)
+        if not text.strip():
+            self.app.set_status(self, "Nothing to format.")
+            return
+        formatted = sqlparse.format(text, reindent=True, keyword_case="upper").strip("\n")
+        self.editor.delete(sel_start, sel_end)
+        self.editor.insert(sel_start, formatted)
+        self.highlight_syntax()
+        self._update_line_numbers()
+        self.app.set_status(self, "Formatted selection." if has_selection else "Formatted query.")
+
     # ---------- query execution ----------
 
     def run_query(self):
         if self.backend is None or not self.backend.is_connected:
             messagebox.showinfo("Not connected", "Connect to a database first.")
             return
-        if self._query_running:
-            self.app.set_status(self, "A query is already running.")
+        try:
+            sel_start, sel_end = self.editor.index("sel.first"), self.editor.index("sel.last")
+            sql_text = self.editor.get(sel_start, sel_end)
+        except tk.TclError:
+            sql_text = self.editor.get("1.0", "end-1c")
+        self._execute_sql_text(sql_text)
+
+    def explain_query(self):
+        if self.backend is None or not self.backend.is_connected:
+            messagebox.showinfo("Not connected", "Connect to a database first.")
             return
         try:
             sel_start, sel_end = self.editor.index("sel.first"), self.editor.index("sel.last")
-            sql = self.editor.get(sel_start, sel_end)
+            sql_text = self.editor.get(sel_start, sel_end)
         except tk.TclError:
-            sql = self.editor.get("1.0", "end-1c")
-        sql = sql.strip()
-        if not sql:
+            sql_text = self.editor.get("1.0", "end-1c")
+        statements = split_statements(sql_text)
+        if not statements:
+            self.app.set_status(self, "Nothing to explain.")
+            return
+        if len(statements) > 1:
+            messagebox.showinfo("Explain Plan", "Select (or write) just one statement to explain.")
+            return
+        self._execute_sql_text(self.backend.explain_statement(statements[0]), is_explain=True)
+
+    def _execute_sql_text(self, sql_text, is_explain=False):
+        if self._query_running:
+            self.app.set_status(self, "A query is already running.")
+            return
+        statements = split_statements(sql_text)
+        if not statements:
             self.app.set_status(self, "Nothing to run.")
             return
 
@@ -1262,13 +1823,20 @@ class QueryTab:
         self.app._sync_chrome_if_active(self)
 
         def work():
-            return self.backend.execute(sql)
+            results = []
+            for stmt in statements:
+                try:
+                    columns, rows = self.backend.execute(stmt)
+                    results.append((stmt, columns, rows, None))
+                except BackendError as exc:
+                    results.append((stmt, None, None, exc))
+                    break
+            return results
 
-        def done(result, error):
+        def done(results, error):
             self._query_running = False
             self.app._sync_chrome_if_active(self)
             elapsed_ms = (time.monotonic() - started) * 1000
-            print(f"[run_query] done after {elapsed_ms:.0f}ms, error={error!r}, cancel_requested={self._cancel_requested}")
             if error is not None:
                 if self._cancel_requested:
                     self.app.set_status(self, f"Query cancelled after {elapsed_ms:.0f} ms.")
@@ -1276,21 +1844,7 @@ class QueryTab:
                     self.app.set_status(self, f"Error after {elapsed_ms:.0f} ms.")
                     messagebox.showerror("Query error", str(error))
                 return
-            columns, rows = result
-            if columns is None:
-                affected = rows
-                self.app.set_status(self, f"OK. {affected} row(s) affected. ({elapsed_ms:.0f} ms)")
-                self.results_sheet.headers([])
-                self.results_sheet.set_sheet_data([], reset_highlights=True)
-                return
-            self._show_results(columns, rows)
-            truncated = len(rows) > 2000
-            shown = min(len(rows), 2000)
-            self.app.set_status(
-                self,
-                f"{len(rows)} row(s) returned ({elapsed_ms:.0f} ms)"
-                + (f" — showing first {shown}" if truncated else ""),
-            )
+            self._show_batch_results(results, elapsed_ms, record=not is_explain)
 
         self._run_async(work, done)
 
@@ -1306,7 +1860,6 @@ class QueryTab:
             return backend.cancel()
 
         def done(result, error):
-            print(f"[cancel] backend.cancel() -> result={result!r} error={error!r}")
             if error is not None:
                 self.app.set_status(self, f"Cancel request errored: {error}")
             elif not result:
@@ -1316,10 +1869,99 @@ class QueryTab:
 
         self._run_async(work, done)
 
-    def _show_results(self, columns, rows):
+    def _history_connection_label(self):
+        if self.connected_server is None:
+            return "?"
+        parts = [self.connected_server]
+        if self.active_database:
+            parts.append(self.active_database)
+        return "/".join(parts)
+
+    def _show_batch_results(self, results, elapsed_ms, record=True):
+        self._clear_result_tabs()
+        result_count = 0
+        total_rows = 0
+        had_error = False
+        conn_label = self._history_connection_label()
+
+        for stmt, columns, rows, err in results:
+            if err is not None:
+                had_error = True
+                if self._cancel_requested:
+                    self._log_message(f"Cancelled: {_sql_snippet(stmt)}")
+                else:
+                    self._log_message(f"Error: {err} — {_sql_snippet(stmt)}")
+                continue
+            if columns is None:
+                affected = rows
+                self._log_message(f"OK. {affected} row(s) affected. — {_sql_snippet(stmt)}")
+                if record:
+                    record_history(stmt, elapsed_ms, affected, conn_label)
+                continue
+            result_count += 1
+            total_rows += len(rows)
+            self._add_result_tab(result_count, columns, rows, select=(result_count == 1))
+            if record:
+                record_history(stmt, elapsed_ms, len(rows), conn_label)
+
+        if result_count == 0 and not had_error:
+            self._add_placeholder_result_tab()
+
+        # A lone failing statement keeps the old single-query UX (a modal);
+        # a multi-statement batch just logs each outcome instead of a
+        # popup per statement.
+        if had_error and len(results) == 1 and not self._cancel_requested:
+            messagebox.showerror("Query error", str(results[0][3]))
+
+        if had_error and self._cancel_requested:
+            self.app.set_status(self, f"Query cancelled after {elapsed_ms:.0f} ms.")
+        elif had_error:
+            self.app.set_status(self, f"Completed with error(s) after {elapsed_ms:.0f} ms.")
+        elif result_count:
+            self.app.set_status(self, f"{total_rows} row(s) total across {result_count} result set(s) ({elapsed_ms:.0f} ms).")
+        else:
+            self.app.set_status(self, f"OK ({elapsed_ms:.0f} ms).")
+
+    def _clear_result_tabs(self):
+        for tab_id in self.results_notebook.tabs():
+            self.results_notebook.forget(tab_id)
+        self._result_sheets = []
+
+    def _add_placeholder_result_tab(self):
+        frame = ttk.Frame(self.results_notebook)
+        ttk.Label(frame, text="(no results yet)", anchor="center").pack(expand=True, fill="both")
+        self.results_notebook.add(frame, text="Results")
+
+    def _add_result_tab(self, n, columns, rows, select=True):
+        frame = ttk.Frame(self.results_notebook)
+        theme = getattr(self, "_sheet_theme", "dark blue" if self.app.dark_mode_var.get() else "light blue")
+        sheet = Sheet(
+            frame, headers=[], data=[],
+            font=("Consolas", 10, "normal"), header_font=("Consolas", 10, "bold"),
+            theme=theme,
+        )
+        sheet.enable_bindings(
+            "single_select", "row_select", "column_select", "arrowkeys",
+            "copy", "select_all", "column_width_resize", "double_click_column_resize",
+            "rc_select", "rc_popup_menu", "sort_rows",
+        )
+        sheet.grid(row=0, column=0, sticky="nsew")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        shown = min(len(rows), 2000)
+        suffix = f"{shown}+" if len(rows) > 2000 else str(shown)
+        self.results_notebook.add(frame, text=f"Result {n}  ({suffix} rows)")
+        self._result_sheets.append(sheet)
+        self._populate_sheet(sheet, columns, rows)
+        if select:
+            self.results_notebook.select(frame)
+        return sheet
+
+    def _populate_sheet(self, sheet, columns, rows):
         shown_rows = rows[:2000]
         cell_font = tkfont.Font(font=("Consolas", 10))
-        max_width_px = int(self.results_sheet.winfo_fpixels("2i"))
+        max_width_px = int(sheet.winfo_fpixels("2i"))
         min_width_px = 40
         padding_px = 24
         sample = shown_rows[:500]
@@ -1346,18 +1988,29 @@ class QueryTab:
                     display_row.append(str(v))
             display_rows.append(display_row)
 
-        self.results_sheet.headers(list(columns))
-        self.results_sheet.set_sheet_data(display_rows, reset_highlights=True)
-        self.results_sheet.set_column_widths(col_widths)
+        sheet.headers(list(columns))
+        sheet.set_sheet_data(display_rows, reset_highlights=True)
+        sheet.set_column_widths(col_widths)
         if null_cells:
-            self.results_sheet.highlight_cells(
-                cells=null_cells, bg="#d9d9d9", fg="#999999", redraw=False
-            )
-        self.results_sheet.redraw()
+            sheet.highlight_cells(cells=null_cells, bg="#d9d9d9", fg="#999999", redraw=False)
+        sheet.redraw()
+
+    def _current_sheet(self):
+        sel = self.results_notebook.select()
+        if not sel:
+            return None
+        idx = self.results_notebook.index(sel)
+        if idx < len(self._result_sheets):
+            return self._result_sheets[idx]
+        return None
 
     def export_csv(self):
-        headers = self.results_sheet.headers()
-        data = self.results_sheet.get_sheet_data()
+        sheet = self._current_sheet()
+        if sheet is None:
+            messagebox.showinfo("Nothing to export", "Run a query that returns rows first.")
+            return
+        headers = sheet.headers()
+        data = sheet.get_sheet_data()
         if not headers:
             messagebox.showinfo("Nothing to export", "Run a query that returns rows first.")
             return
@@ -1435,6 +2088,28 @@ class QueryTab:
         if self.backend is not None:
             self.backend.disconnect()
 
+    def session_state(self):
+        """Snapshot for session-restore: buffer content, file association,
+        and (password-free) connection params if currently connected."""
+        connection = None
+        if self.backend is not None and self.backend.is_connected:
+            engine = next((k for k, v in BACKENDS.items() if isinstance(self.backend, v)), None)
+            connection = {
+                "engine": engine,
+                "server": self.connected_server,
+                "database": self.active_database,
+                "auth_mode": getattr(self, "_last_auth_mode", "windows"),
+                "port": getattr(self, "_last_port", None),
+                "encrypt": getattr(self, "_last_encrypt", True),
+                "trust_cert": getattr(self, "_last_trust_cert", True),
+            }
+        return {
+            "content": self.editor.get("1.0", "end-1c"),
+            "current_file": self.current_file,
+            "title": self.title if self.current_file is None else None,
+            "connection": connection,
+        }
+
 
 class NotepaDBApp:
     def __init__(self, root):
@@ -1451,6 +2126,7 @@ class NotepaDBApp:
         self.dark_mode_var = tk.BooleanVar(value=options_cfg.get("dark_mode", False))
         self.show_line_numbers_var = tk.BooleanVar(value=options_cfg.get("show_line_numbers", True))
         self.word_wrap_var = tk.BooleanVar(value=options_cfg.get("word_wrap", False))
+        self.restore_session_var = tk.BooleanVar(value=options_cfg.get("restore_session", False))
 
         self._native_ttk_theme = ttk.Style().theme_use()
         self._configure_dark_ttk_style()
@@ -1459,11 +2135,13 @@ class NotepaDBApp:
         self._build_toolbar()
         self._build_notebook()
 
-        self.new_tab()
+        self._offer_crash_recovery()
+        self._restore_or_new_tab()
         self._apply_global_ttk_theme()
         self._apply_chrome_theme()
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(30000, self._autosave_tick)
 
     @property
     def active_tab(self):
@@ -1520,6 +2198,18 @@ class NotepaDBApp:
         self._save_option("word_wrap", self.word_wrap_var.get())
         for tab in self.tabs:
             tab.apply_word_wrap(self.word_wrap_var.get())
+
+    def toggle_restore_session(self):
+        self._save_option("restore_session", self.restore_session_var.get())
+
+    def open_history_dialog(self):
+        if getattr(self, "_history_dialog", None) is not None and self._history_dialog.winfo_exists():
+            self._history_dialog.history = load_history()
+            self._history_dialog._populate()
+            self._history_dialog.lift()
+            self._history_dialog.focus_set()
+            return
+        self._history_dialog = HistoryDialog(self)
 
     def _configure_dark_ttk_style(self):
         # ttk's native "vista" theme on Windows ignores most color overrides
@@ -1597,6 +2287,10 @@ class NotepaDBApp:
         file_menu.add_command(label="Exit", command=self._on_close)
         menubar.add_cascade(label="File", menu=file_menu)
 
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="Toggle Comment", command=lambda: self._dispatch("toggle_comment"), accelerator="Ctrl+/")
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+
         conn_menu = tk.Menu(menubar, tearoff=0)
         conn_menu.add_command(label="Connect...", command=lambda: self._dispatch("open_connect_dialog"), accelerator="Ctrl+K")
         conn_menu.add_command(label="Disconnect", command=lambda: self._dispatch("disconnect"))
@@ -1615,6 +2309,10 @@ class NotepaDBApp:
         query_menu = tk.Menu(menubar, tearoff=0)
         query_menu.add_command(label="Run", command=lambda: self._dispatch("run_query"), accelerator="F5")
         query_menu.add_command(label="Cancel", command=lambda: self._dispatch("cancel_query"), accelerator="Ctrl+Break")
+        query_menu.add_command(label="Explain Plan", command=lambda: self._dispatch("explain_query"), accelerator="Ctrl+L")
+        query_menu.add_separator()
+        query_menu.add_command(label="Format SQL", command=lambda: self._dispatch("format_sql"), accelerator="Ctrl+Shift+F")
+        query_menu.add_command(label="History...", command=self.open_history_dialog, accelerator="Ctrl+Shift+H")
         query_menu.add_separator()
         query_menu.add_command(label="Export Results to CSV...", command=lambda: self._dispatch("export_csv"))
         menubar.add_cascade(label="Query", menu=query_menu)
@@ -1629,6 +2327,9 @@ class NotepaDBApp:
         options_menu.add_checkbutton(
             label="Word Wrap", variable=self.word_wrap_var, command=self.toggle_word_wrap,
         )
+        options_menu.add_checkbutton(
+            label="Restore Tabs on Startup", variable=self.restore_session_var, command=self.toggle_restore_session,
+        )
         menubar.add_cascade(label="Options", menu=options_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -1636,7 +2337,7 @@ class NotepaDBApp:
         menubar.add_cascade(label="Help", menu=help_menu)
 
         self._menus = [
-            menubar, file_menu, conn_menu, find_menu, query_menu, options_menu, help_menu,
+            menubar, file_menu, edit_menu, conn_menu, find_menu, query_menu, options_menu, help_menu,
         ]
 
         self.root.config(menu=menubar)
@@ -1648,6 +2349,9 @@ class NotepaDBApp:
         self.root.bind("<Control-k>", lambda e: self._dispatch("open_connect_dialog"))
         self.root.bind("<F5>", lambda e: self._dispatch("run_query"))
         self.root.bind("<Control-Cancel>", lambda e: self._dispatch("cancel_query"))
+        self.root.bind("<Control-l>", lambda e: self._dispatch("explain_query"))
+        self.root.bind("<Control-Shift-F>", lambda e: self._dispatch("format_sql"))
+        self.root.bind("<Control-Shift-H>", lambda e: self.open_history_dialog())
         self.root.bind("<Control-f>", lambda e: self._dispatch("open_find_dialog"))
         self.root.bind("<Control-h>", lambda e: self._dispatch("open_replace_dialog"))
         self.root.bind("<F3>", lambda e: self._dispatch("find_next"))
@@ -1755,17 +2459,13 @@ class NotepaDBApp:
                 "notepaDB — a notepad, but only for databases.\n\n"
                 "Type SQL, autocomplete real table/column names, run it.\n\n"
                 "Each tab is an independent session with its own connection.\n\n"
-                "Supported engines: SQL Server, PostgreSQL, MySQL/MariaDB."
+                "Supported engines: SQL Server, PostgreSQL, MySQL/MariaDB, Oracle, SQLite."
             ),
             justify="left",
         ).pack(anchor="w")
-
-        link = ttk.Label(
-            frame, text="☕  Buy me a coffee", foreground="#1a73e8", cursor="hand2",
-            font=("Segoe UI", 9, "underline"),
-        )
+        link = ttk.Label(frame, text="Buy me a coffee", foreground="#1A73E8", cursor="hand2", font=("Segoe UI", 9, "underline"))
         link.pack(anchor="w", pady=(16, 0))
-        link.bind("<Button-1>", lambda e: webbrowser.open("https://ko-fi.com/drormaor"))
+        link.bind("<Button-1>", lambda e: webbrowser.open("ko-fi.com/drormaor"))
 
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill="x", pady=(16, 0))
@@ -1781,10 +2481,112 @@ class NotepaDBApp:
         for tab in self.tabs:
             if not self._confirm_close(tab):
                 return
+        save_session([tab.session_state() for tab in self.tabs])
         for tab in self.tabs:
             if tab.backend is not None:
                 tab.backend.disconnect()
+        self._clear_autosave()
         self.root.destroy()
+
+    # ---------- session restore / crash recovery ----------
+
+    def _restore_or_new_tab(self):
+        if self.restore_session_var.get():
+            for state in load_session():
+                self._open_tab_from_session(state)
+        if not self.tabs:
+            self.new_tab()
+
+    def _open_tab_from_session(self, state):
+        tab = self.new_tab()
+        content = state.get("content") or ""
+        if content:
+            tab.editor.delete("1.0", "end")
+            tab.editor.insert("1.0", content)
+            tab.highlight_syntax()
+            tab._update_line_numbers()
+
+        current_file = state.get("current_file")
+        if current_file and os.path.isfile(current_file):
+            tab.current_file = current_file
+            tab.set_title(os.path.basename(current_file))
+        elif state.get("title"):
+            tab.set_title(state["title"])
+        tab._mark_clean()
+
+        conn = state.get("connection")
+        if not conn:
+            return
+        # Passwords are never persisted, so only auto-reconnect when none is
+        # needed — Windows auth or a local SQLite file. Anything else just
+        # gets a reminder; the user re-enters credentials via Connect.
+        if conn.get("engine") == "sqlite" or conn.get("auth_mode") == "windows":
+            params = dict(conn, username="", password="")
+            tab._connect_with(params)
+        else:
+            label = conn.get("server", "?")
+            if conn.get("database"):
+                label += f"/{conn['database']}"
+            tab._log_message(f"Session restored — reconnect manually to {label} (password not saved).")
+
+    def _offer_crash_recovery(self):
+        files = _list_autosave_files()
+        if not files:
+            return
+        if not messagebox.askyesno(
+            "Recover unsaved work?",
+            f"notepaDB didn't close cleanly last time — {len(files)} tab(s) with unsaved "
+            "changes were found. Recover them?",
+        ):
+            for path in files:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            return
+        for path in files:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception:
+                continue
+            tab = self.new_tab()
+            tab.editor.delete("1.0", "end")
+            tab.editor.insert("1.0", content)
+            tab.editor.edit_modified(True)
+            tab._on_modified_flag(None)
+            tab.highlight_syntax()
+            tab._update_line_numbers()
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def _autosave_tick(self):
+        try:
+            os.makedirs(AUTOSAVE_DIR, exist_ok=True)
+            for tab in self.tabs:
+                path = _autosave_path(tab.index)
+                if tab.dirty:
+                    try:
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(tab.editor.get("1.0", "end-1c"))
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+        finally:
+            self.root.after(30000, self._autosave_tick)
+
+    def _clear_autosave(self):
+        for path in _list_autosave_files():
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 def main():

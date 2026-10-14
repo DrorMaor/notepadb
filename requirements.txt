@@ -7,5 +7,13 @@ psycopg2-binary>=2.9
 # MySQL / MariaDB support
 mysql-connector-python>=8.0
 
+# Oracle support (thin mode, no Instant Client needed)
+oracledb>=2.0
+
+# SQLite support uses the stdlib sqlite3 module — nothing to install
+
 # Results grid (per-cell coloring, e.g. gray NULLs)
 tksheet>=7.6
+
+# SQL formatting ("Format SQL" menu command)
+sqlparse>=0.5

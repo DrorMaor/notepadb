@@ -1,8 +1,9 @@
 """
 Database backend abstraction.
 
-Every backend (SQL Server, PostgreSQL, MySQL/MariaDB) implements the same
-small interface so the GUI never has to know which engine it's talking to:
+Every backend (SQL Server, PostgreSQL, MySQL/MariaDB, Oracle, SQLite)
+implements the same small interface so the GUI never has to know which
+engine it's talking to:
 
     connect(**kwargs)              -> establishes the connection
     disconnect()
@@ -16,6 +17,7 @@ Add a new engine by subclassing DbBackend and registering it in BACKENDS.
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 
 
@@ -68,6 +70,27 @@ class DbBackend(ABC):
         another thread. Returns whether the cancel request was sent
         successfully (not whether the query actually stopped in time)."""
         return False
+
+    def select_top_sql(self, table_key: str, limit: int = 1000) -> str:
+        """Return a quick 'peek at this table' query. `table_key` is whatever
+        list_schema() used as a key (bare table name, or 'schema.table')."""
+        return f'SELECT * FROM {_quote_dotted(table_key)} LIMIT {limit}'
+
+    def explain_statement(self, stmt: str) -> str:
+        """Return SQL that, when run through execute(), shows this engine's
+        query plan for `stmt` instead of actually running it."""
+        return f"EXPLAIN {stmt}"
+
+
+def _quote_ident(name: str) -> str:
+    return f'"{name}"'
+
+
+def _quote_dotted(table_key: str) -> str:
+    if "." in table_key:
+        schema, table = table_key.split(".", 1)
+        return f"{_quote_ident(schema)}.{_quote_ident(table)}"
+    return _quote_ident(table_key)
 
 
 class SqlServerBackend(DbBackend):
@@ -221,6 +244,17 @@ class SqlServerBackend(DbBackend):
             return True
         except Exception:
             return False
+
+    def select_top_sql(self, table_key: str, limit: int = 1000) -> str:
+        if "." in table_key:
+            schema, table = table_key.split(".", 1)
+            name = f"[{_escape_bracket(schema)}].[{_escape_bracket(table)}]"
+        else:
+            name = f"[{_escape_bracket(table_key)}]"
+        return f"SELECT TOP {limit} * FROM {name}"
+
+    def explain_statement(self, stmt: str) -> str:
+        return f"SET SHOWPLAN_ALL ON;\n{stmt};\nSET SHOWPLAN_ALL OFF;"
 
 
 class PostgresBackend(DbBackend):
@@ -507,11 +541,278 @@ class MySqlBackend(DbBackend):
         except Exception:
             return False
 
+    def select_top_sql(self, table_key: str, limit: int = 1000) -> str:
+        return f"SELECT * FROM `{table_key}` LIMIT {limit}"
+
+
+class OracleBackend(DbBackend):
+    """Needs python-oracledb (`pip install oracledb`). Runs in "thin" mode by
+    default, i.e. no Oracle Instant Client install required.
+
+    Oracle has no SQL-Server-style "list every database, USE one" model — a
+    connection is bound to one service/pluggable database for its life, same
+    as Postgres. `database` here means the service name (or SID). Switching
+    it, like Postgres, opens a fresh connection rather than reusing `conn`.
+    `list_schema` spans every user schema visible to the connected account
+    (via ALL_TAB_COLUMNS), keyed 'owner.table', skipping Oracle-maintained
+    schemas (SYS, SYSTEM, ...).
+    """
+
+    label = "Oracle"
+
+    _SYSTEM_SCHEMAS = {
+        "SYS", "SYSTEM", "OUTLN", "XDB", "ORDSYS", "ORDDATA", "MDSYS", "CTXSYS",
+        "DBSNMP", "APPQOSSYS", "GSMADMIN_INTERNAL", "ORACLE_OCM", "DVSYS",
+        "DVF", "LBACSYS", "AUDSYS", "OJVMSYS", "WMSYS", "ANONYMOUS",
+        "FLOWS_FILES", "APEX_PUBLIC_USER", "GGSYS", "REMOTE_SCHEDULER_AGENT",
+        "SYSBACKUP", "SYSDG", "SYSKM", "SYSRAC", "DIP", "XS$NULL",
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.current_database = None
+        self._conn_kwargs = None
+
+    def connect(self, server, database=None, auth_mode="windows", username=None, password=None,
+                encrypt=True, trust_cert=True, port=None, timeout=10):
+        import oracledb
+
+        if not database:
+            raise BackendError("Service name (database) is required for Oracle.")
+        if not username:
+            raise BackendError("Username is required for Oracle.")
+
+        kwargs = dict(
+            host=server,
+            port=port or 1521,
+            service_name=database,
+            user=username,
+            password=password or "",
+            protocol="tcps" if encrypt else "tcp",
+            tcp_connect_timeout=timeout,
+        )
+        if encrypt and trust_cert:
+            kwargs["ssl_server_dn_match"] = False
+
+        try:
+            conn = oracledb.connect(**kwargs)
+            conn.autocommit = True
+        except oracledb.Error as exc:
+            raise BackendError(_friendly_oracle_error(exc)) from exc
+
+        self.conn = conn
+        self._conn_kwargs = kwargs
+        self.current_database = database
+
+    def list_databases(self) -> list:
+        if not self.is_connected:
+            raise BackendError("Not connected.")
+        return [self.current_database]
+
+    def use_database(self, name: str):
+        import oracledb
+
+        if not self.is_connected:
+            raise BackendError("Not connected.")
+        if name == self.current_database:
+            return
+        kwargs = dict(self._conn_kwargs)
+        kwargs["service_name"] = name
+        try:
+            new_conn = oracledb.connect(**kwargs)
+            new_conn.autocommit = True
+        except oracledb.Error as exc:
+            raise BackendError(_friendly_oracle_error(exc)) from exc
+        old_conn = self.conn
+        self.conn = new_conn
+        self._conn_kwargs = kwargs
+        self.current_database = name
+        try:
+            old_conn.close()
+        except Exception:
+            pass
+
+    def list_schema(self, database: str = None) -> dict:
+        """Return {'owner.table': [(col_name, type_str), ...]}."""
+        if not self.is_connected:
+            raise BackendError("Not connected.")
+        db = database or self.current_database
+        if not db:
+            raise BackendError("No database selected.")
+        if db != self.current_database:
+            # Oracle has no in-session way to query another service; the
+            # caller would need to connect/use_database into it first.
+            raise BackendError(f"Not connected to '{db}'.")
+
+        query = """
+            SELECT owner, table_name, column_name, column_id,
+                   data_type, data_length, data_precision, data_scale
+            FROM all_tab_columns
+            WHERE owner NOT IN ({placeholders})
+            ORDER BY owner, table_name, column_id
+        """.format(placeholders=", ".join(f":{i+1}" for i in range(len(self._SYSTEM_SCHEMAS))))
+
+        schema = {}
+        cur = self.conn.cursor()
+        cur.execute(query, list(self._SYSTEM_SCHEMAS))
+        for owner, table_name, column_name, _, data_type, length, precision, scale in cur.fetchall():
+            key = f"{owner}.{table_name}"
+            type_str = _format_oracle_type(data_type, length, precision, scale)
+            schema.setdefault(key, []).append((column_name, type_str))
+        return schema
+
+    def execute(self, sql: str):
+        if not self.is_connected:
+            raise BackendError("Not connected.")
+        # A trailing ";" is SQL*Plus/IDE sugar, not valid in a single
+        # statement sent over OCI — strip it or Oracle raises ORA-00911.
+        sql = sql.strip()
+        if sql.endswith(";"):
+            sql = sql[:-1]
+
+        cur = self.conn.cursor()
+        try:
+            cur.execute(sql)
+        except Exception as exc:
+            raise BackendError(str(exc)) from exc
+
+        if cur.description is None:
+            try:
+                rowcount = cur.rowcount
+            except Exception:
+                rowcount = -1
+            return None, rowcount
+
+        columns = [col[0] for col in cur.description]
+        rows = cur.fetchall()
+        return columns, rows
+
+    def cancel(self) -> bool:
+        if self.conn is None:
+            return False
+        try:
+            self.conn.cancel()
+            return True
+        except Exception:
+            return False
+
+    def select_top_sql(self, table_key: str, limit: int = 1000) -> str:
+        return f"SELECT * FROM {_quote_dotted(table_key)} FETCH FIRST {limit} ROWS ONLY"
+
+    def explain_statement(self, stmt: str) -> str:
+        return f"EXPLAIN PLAN FOR {stmt};\nSELECT * FROM TABLE(DBMS_XPLAN.DISPLAY());"
+
+
+class SqliteBackend(DbBackend):
+    """Uses the stdlib `sqlite3` module — no driver install needed.
+
+    SQLite is a local file, not a client/server engine: there's no host,
+    port, or login, and the "database" is simply the file on disk (passed
+    in as `server`, since the GUI's connect dialog repurposes that field as
+    the file path). Like MySQL, there's no schema layer above the database,
+    so `list_schema` keys are bare table names. Only one file is ever open
+    at a time — `list_databases` reports just that one.
+    """
+
+    label = "SQLite"
+
+    def __init__(self):
+        super().__init__()
+        self.current_database = None
+        self._path = None
+
+    def connect(self, server, database=None, auth_mode="windows", username=None, password=None,
+                encrypt=True, trust_cert=True, port=None, timeout=10):
+        import sqlite3
+
+        if not server:
+            raise BackendError("File path is required for SQLite.")
+        try:
+            # check_same_thread=False: every async operation in the GUI runs
+            # on its own worker thread, so the connection outlives any one
+            # of them. isolation_level=None turns off sqlite3's implicit
+            # transactions so each statement commits immediately, matching
+            # the autocommit behavior of the other backends.
+            conn = sqlite3.connect(server, timeout=timeout, check_same_thread=False)
+            conn.isolation_level = None
+        except sqlite3.Error as exc:
+            raise BackendError(str(exc)) from exc
+
+        self.conn = conn
+        self._path = server
+        self.current_database = database or os.path.basename(server)
+
+    def list_databases(self) -> list:
+        if not self.is_connected:
+            raise BackendError("Not connected.")
+        return [self.current_database]
+
+    def use_database(self, name: str):
+        if not self.is_connected:
+            raise BackendError("Not connected.")
+        if name != self.current_database:
+            raise BackendError("A SQLite connection is bound to a single file; reconnect to open another one.")
+
+    def list_schema(self, database: str = None) -> dict:
+        """Return {table_name: [(col_name, type_str), ...]}."""
+        if not self.is_connected:
+            raise BackendError("Not connected.")
+        db = database or self.current_database
+        if not db:
+            raise BackendError("No database selected.")
+        if db != self.current_database:
+            raise BackendError(f"Not connected to '{db}'.")
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        table_names = [row[0] for row in cur.fetchall()]
+
+        schema = {}
+        for table_name in table_names:
+            cur.execute(f'PRAGMA table_info("{table_name}")')
+            cols = [(col_name, (col_type or "").lower()) for _, col_name, col_type, *_rest in cur.fetchall()]
+            schema[table_name] = cols
+        return schema
+
+    def execute(self, sql: str):
+        if not self.is_connected:
+            raise BackendError("Not connected.")
+        cur = self.conn.cursor()
+        try:
+            cur.execute(sql)
+        except Exception as exc:
+            raise BackendError(str(exc)) from exc
+
+        if cur.description is None:
+            try:
+                rowcount = cur.rowcount
+            except Exception:
+                rowcount = -1
+            return None, rowcount
+
+        columns = [col[0] for col in cur.description]
+        rows = cur.fetchall()
+        return columns, rows
+
+    def cancel(self) -> bool:
+        if self.conn is None:
+            return False
+        try:
+            self.conn.interrupt()
+            return True
+        except Exception:
+            return False
+
+    def explain_statement(self, stmt: str) -> str:
+        return f"EXPLAIN QUERY PLAN {stmt}"
+
 
 BACKENDS = {
     "sqlserver": SqlServerBackend,
     "postgres": PostgresBackend,
     "mysql": MySqlBackend,
+    "oracle": OracleBackend,
+    "sqlite": SqliteBackend,
 }
 
 
@@ -602,4 +903,34 @@ def _friendly_mysql_error(exc) -> str:
         return "Connection timed out. Check the server name/port and that it's reachable."
     if "unknown database" in low:
         return "Database not found. Check the database name."
+    return msg
+
+
+_ORACLE_SIZED_TYPES = {"VARCHAR2", "NVARCHAR2", "CHAR", "NCHAR", "RAW"}
+_ORACLE_PRECISION_SCALE_TYPES = {"NUMBER"}
+
+
+def _format_oracle_type(data_type, length, precision, scale) -> str:
+    name = (data_type or "").lower()
+    upper = (data_type or "").upper()
+    if upper in _ORACLE_SIZED_TYPES:
+        return f"{name}({length})" if length is not None else name
+    if upper in _ORACLE_PRECISION_SCALE_TYPES:
+        if precision is not None and scale is not None:
+            return f"{name}({precision},{scale})" if scale else f"{name}({precision})"
+        return name
+    return name
+
+
+def _friendly_oracle_error(exc) -> str:
+    msg = str(exc).strip()
+    low = msg.lower()
+    if "ora-01017" in low:
+        return "Login failed. Check username/password and try again."
+    if "ora-12170" in low or "ora-12535" in low or "timeout" in low:
+        return "Connection timed out. Check the server name/port and that it's reachable."
+    if "ora-12514" in low or "ora-12505" in low:
+        return "Service name not found. Check the database (service name) and try again."
+    if "ora-12541" in low:
+        return "No listener found. Check the server name/port and that the Oracle listener is running."
     return msg
