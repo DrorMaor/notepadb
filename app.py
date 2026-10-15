@@ -940,7 +940,6 @@ class QueryTab:
         self.editor.bind("<ButtonPress-1>", lambda e: self.autocomplete.hide())
         self.editor.bind("<ButtonRelease-1>", lambda e: self._update_bracket_match(), add="+")
         self.editor.bind("<<Modified>>", self._on_modified_flag)
-        self.editor.bind("<Control-slash>", self.toggle_comment)
 
         # Tk's Text widget has built-in Emacs-style bindings for Control-o
         # (insert newline), Control-t (transpose chars), and Control-k
@@ -1222,7 +1221,17 @@ class QueryTab:
     def _select_top_rows(self, table_key):
         if self.backend is None or not self.backend.is_connected:
             return
-        self._insert_and_run(self.backend.select_top_sql(table_key))
+        tab = self.app.new_tab()
+        tab.backend = self.backend
+        tab.connected_server = self.connected_server
+        tab._last_auth_mode = self._last_auth_mode
+        tab.databases = self.databases
+        tab.db_schema_cache = self.db_schema_cache
+        tab.active_database = self.active_database
+        tab.schema = self.schema
+        tab._auto_title(self.active_database or self.connected_server)
+        tab.populate_schema_tree()
+        tab._insert_and_run(self.backend.select_top_sql(table_key))
 
     def _script_table_ddl(self, table_key):
         cols = self._cols_for_table(table_key)
@@ -1247,6 +1256,19 @@ class QueryTab:
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.app.set_status(self, f"Copied {len(cols)} column name(s) to clipboard.")
+
+    def _copy_cells_with_headers(self, sheet):
+        min_r, min_c, max_r, max_c = sheet.get_selected_min_max()
+        if min_r is None:
+            return
+        headers = sheet.headers()
+        data = sheet.get_sheet_data()
+        lines = ["\t".join(str(headers[c]) for c in range(min_c, max_c))]
+        for r in range(min_r, max_r):
+            lines.append("\t".join(str(data[r][c]) for c in range(min_c, max_c)))
+        self.root.clipboard_clear()
+        self.root.clipboard_append("\n".join(lines))
+        self.app.set_status(self, f"Copied {max_r - min_r} row(s) with headers to clipboard.")
 
     def _export_table_csv(self, table_key):
         if self.backend is None or not self.backend.is_connected:
@@ -1943,7 +1965,12 @@ class QueryTab:
         sheet.enable_bindings(
             "single_select", "row_select", "column_select", "arrowkeys",
             "copy", "select_all", "column_width_resize", "double_click_column_resize",
-            "rc_select", "rc_popup_menu", "sort_rows",
+            "rc_select", "rc_popup_menu", "sort_rows", "drag_select",
+        )
+        sheet.popup_menu_add_command(
+            "Copy Cells with Headers",
+            lambda: self._copy_cells_with_headers(sheet),
+            index_menu=False, header_menu=False, empty_space_menu=False,
         )
         sheet.grid(row=0, column=0, sticky="nsew")
         frame.rowconfigure(0, weight=1)
@@ -2287,10 +2314,6 @@ class NotepaDBApp:
         file_menu.add_command(label="Exit", command=self._on_close)
         menubar.add_cascade(label="File", menu=file_menu)
 
-        edit_menu = tk.Menu(menubar, tearoff=0)
-        edit_menu.add_command(label="Toggle Comment", command=lambda: self._dispatch("toggle_comment"), accelerator="Ctrl+/")
-        menubar.add_cascade(label="Edit", menu=edit_menu)
-
         conn_menu = tk.Menu(menubar, tearoff=0)
         conn_menu.add_command(label="Connect...", command=lambda: self._dispatch("open_connect_dialog"), accelerator="Ctrl+K")
         conn_menu.add_command(label="Disconnect", command=lambda: self._dispatch("disconnect"))
@@ -2337,7 +2360,7 @@ class NotepaDBApp:
         menubar.add_cascade(label="Help", menu=help_menu)
 
         self._menus = [
-            menubar, file_menu, edit_menu, conn_menu, find_menu, query_menu, options_menu, help_menu,
+            menubar, file_menu, conn_menu, find_menu, query_menu, options_menu, help_menu,
         ]
 
         self.root.config(menu=menubar)
