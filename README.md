@@ -38,7 +38,14 @@ Python install needed.
 git clone https://github.com/DrorMaor/notepadb.git
 cd notepadb
 pip install -r requirements.txt
-py app.py
+python -m notepadb
+```
+
+Or install it properly via pip:
+
+```bash
+pip install notepadb
+notepadb
 ```
 
 Note: `requirements.txt` installs drivers for every supported engine. If you

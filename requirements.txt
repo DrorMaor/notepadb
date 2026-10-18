@@ -17,3 +17,6 @@ tksheet>=7.6
 
 # SQL formatting ("Format SQL" menu command)
 sqlparse>=0.5
+
+# Per-user config/history directory (OS-appropriate app-data location)
+platformdirs>=4.0

@@ -28,7 +28,7 @@ agree on an approach up front than to rework a finished PR.
 git clone https://github.com/DrorMaor/notepadb.git
 cd notepadb
 pip install -r requirements.txt
-py app.py
+python -m notepadb
 ```
 
 There's no test suite yet; manual verification against the engine(s) your
@@ -59,11 +59,12 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Bump `__version__` in `app.py` and add a `CHANGELOG.md` entry before tagging.
+Bump `__version__` in `notepadb/app.py` and `version` in `pyproject.toml` (they
+must match), and add a `CHANGELOG.md` entry before tagging.
 
 ## Adding a new database backend
 
-Backends live in `db_backends.py` and implement a small common interface
+Backends live in `notepadb/db_backends.py` and implement a small common interface
 (`connect`, `disconnect`, `test`, `list_schema`, `execute`, `label`). Subclass
 `DbBackend`, implement the abstract methods, and register the new class in
 `BACKENDS`. See the existing backends for the expected shape.

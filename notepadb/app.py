@@ -8,7 +8,7 @@ SQL Server, PostgreSQL, MySQL/MariaDB, Oracle, and SQLite are all supported via 
 
 Tabs are independent sessions (like SSMS query windows): each tab has its own connection, schema browser, and results grid.
 
-Run with:  py app.py
+Run with:  python -m notepadb
 """
 
 __version__ = "0.1.0"
@@ -28,17 +28,22 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 from tkinter import font as tkfont
 
 from tksheet import Sheet
+from platformdirs import user_data_dir
 
-from db_backends import BACKENDS, BackendError
-from autocomplete import get_suggestions, SQL_KEYWORDS
+from .db_backends import BACKENDS, BackendError
+from .autocomplete import get_suggestions, SQL_KEYWORDS
 
 # When frozen by PyInstaller, __file__ points into a temp extraction dir that
 # changes every launch (onefile mode), so config saved there would never
-# persist. Use the .exe's own directory instead in that case.
+# persist. Use the .exe's own directory instead in that case (lets a portable
+# exe keep its data alongside itself). Otherwise — pip install or source
+# checkout — site-packages isn't writable/appropriate for user data, so use
+# the OS's per-user app-data directory.
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
-    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    APP_DIR = user_data_dir("notepadb", appauthor=False)
+os.makedirs(APP_DIR, exist_ok=True)
 CONFIG_PATH = os.path.join(APP_DIR, ".notepadb_config.json")
 HISTORY_PATH = os.path.join(APP_DIR, ".notepadb_history.json")
 HISTORY_LIMIT = 300

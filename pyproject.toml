@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "notepadb"
+version = "0.1.0"
+description = "A notepad/scratchpad, but only for databases — SQL with schema-aware autocomplete across SQL Server, PostgreSQL, MySQL/MariaDB, Oracle, and SQLite."
+readme = "README.md"
+license = "GPL-2.0-only"
+authors = [{ name = "Dror Maor" }]
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications",
+    "Intended Audience :: Developers",
+    "Topic :: Database",
+    "Topic :: Database :: Front-Ends",
+]
+dependencies = [
+    "pyodbc>=5.0",
+    "psycopg2-binary>=2.9",
+    "mysql-connector-python>=8.0",
+    "oracledb>=2.0",
+    "tksheet>=7.6",
+    "sqlparse>=0.5",
+    "platformdirs>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/DrorMaor/notepadb"
+Issues = "https://github.com/DrorMaor/notepadb/issues"
+Changelog = "https://github.com/DrorMaor/notepadb/blob/main/CHANGELOG.md"
+
+[project.gui-scripts]
+notepadb = "notepadb.app:main"
+
+[tool.setuptools.packages.find]
+include = ["notepadb*"]
