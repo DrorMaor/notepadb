@@ -47,6 +47,20 @@ locally since it needs no server.
 By submitting a PR, you agree your contribution is licensed under the
 project's [GPL-2.0-only license](LICENSE).
 
+## Cutting a release
+
+Releases are built automatically by
+[`.github/workflows/release.yml`](.github/workflows/release.yml): pushing a
+tag matching `v*.*.*` builds `notepadb.exe` with PyInstaller and attaches it
+to a GitHub Release.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Bump `__version__` in `app.py` and add a `CHANGELOG.md` entry before tagging.
+
 ## Adding a new database backend
 
 Backends live in `db_backends.py` and implement a small common interface

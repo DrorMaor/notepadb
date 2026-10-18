@@ -28,10 +28,17 @@ connection, schema browser, and results grid.
 
 ## Installation
 
+**Windows:** download the latest `notepadb.exe` from
+[Releases](https://github.com/DrorMaor/notepadb/releases) and run it — no
+Python install needed.
+
+**From source** (any OS, or if you want to modify the code):
+
 ```bash
 git clone https://github.com/DrorMaor/notepadb.git
 cd notepadb
 pip install -r requirements.txt
+py app.py
 ```
 
 Note: `requirements.txt` installs drivers for every supported engine. If you
@@ -40,10 +47,6 @@ each backend only fails at *connect time* if its driver is missing, not at
 startup.
 
 ## Usage
-
-```bash
-py app.py
-```
 
 Open a tab, pick **Connection → Connect...** (`Ctrl+K`), choose your engine,
 and start typing SQL. Run with `F5`.
