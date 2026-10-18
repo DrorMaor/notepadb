@@ -1,13 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2026 Dror Maor
 """
 notepadb — a notepad/scratchpad, but only for databases.
 
-Type SQL, get autocomplete for real table/column names from the server you're connected to, run it, see results. 
+Type SQL, get autocomplete for real table/column names from the server you're connected to, run it, see results.
 SQL Server, PostgreSQL, MySQL/MariaDB, Oracle, and SQLite are all supported via db_backends.py.
 
 Tabs are independent sessions (like SSMS query windows): each tab has its own connection, schema browser, and results grid.
 
 Run with:  py app.py
 """
+
+__version__ = "0.1.0"
 
 import csv
 import glob
@@ -2482,13 +2486,14 @@ class NotepaDBApp:
                 "notepaDB — a notepad, but only for databases.\n\n"
                 "Type SQL, autocomplete real table/column names, run it.\n\n"
                 "Each tab is an independent session with its own connection.\n\n"
-                "Supported engines: SQL Server, PostgreSQL, MySQL/MariaDB, Oracle, SQLite."
+                "Supported engines: SQL Server, PostgreSQL, MySQL/MariaDB, Oracle, SQLite.\n\n"
+                f"Version {__version__} — GPL-2.0-only"
             ),
             justify="left",
         ).pack(anchor="w")
         link = ttk.Label(frame, text="Buy me a coffee", foreground="#1A73E8", cursor="hand2", font=("Segoe UI", 9, "underline"))
         link.pack(anchor="w", pady=(16, 0))
-        link.bind("<Button-1>", lambda e: webbrowser.open("ko-fi.com/drormaor"))
+        link.bind("<Button-1>", lambda e: webbrowser.open("https://ko-fi.com/drormaor"))
 
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill="x", pady=(16, 0))
