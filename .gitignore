@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 *.log
 .notepadb_config.json
+.notepadb_history.json
+.notepadb_session.json
+.notepadb_autosave/
 build/
 dist/
-*.spec
