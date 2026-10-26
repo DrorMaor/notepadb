@@ -1,0 +1,1016 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>notepaDB · A notepad, but only for databases</title>
+<meta name="description" content="notepaDB is a free, open-source SQL scratchpad for Linux, macOS and Windows. Connect, type SQL with autocomplete for the real tables and columns on your server, press F5. SQL Server, PostgreSQL, MySQL/MariaDB, Oracle and SQLite.">
+<link rel="canonical" href="https://notepadb.com/">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#2e2e32" media="(prefers-color-scheme: dark)">
+<script>(function(){var d=document.documentElement;try{var t=localStorage.getItem("notepadb-theme");if(t==="light"||t==="dark")d.setAttribute("data-theme",t)}catch(e){}var u=navigator.userAgent,p=(navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||"",o=/android/i.test(u)?"android":/iphone|ipad|ipod/i.test(u)||(/mac/i.test(p)&&navigator.maxTouchPoints>1)?"ios":/win/i.test(p)||/windows/i.test(u)?"windows":/mac/i.test(p)||/mac os x/i.test(u)?"mac":/linux|x11|cros|bsd/i.test(p+" "+u)?"linux":"other";d.setAttribute("data-os",o);var r=/fedora|red hat|centos|rocky|alma/i.test(u)?"fed":/arch linux|manjaro|endeavour/i.test(u)?"arch":/opensuse|suse/i.test(u)?"suse":/ubuntu|debian|mint|pop!?_os|elementary/i.test(u)?"deb":"";if(r)d.setAttribute("data-distro",r)})();</script>
+<link rel="preload" href="/assets/fonts/adwaita-sans.a95ac8f4.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/adwaita-mono-bold.c2efd1ff.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/adwaita-mono-regular.e21eaefb.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="notepaDB">
+<meta property="og:url" content="https://notepadb.com/">
+<meta property="og:title" content="notepaDB · A notepad, but only for databases">
+<meta property="og:description" content="Type SQL with autocomplete for the real tables and columns on your server. Press F5. Free and open source for Linux, macOS and Windows: SQL Server, PostgreSQL, MySQL/MariaDB, Oracle and SQLite.">
+<meta property="og:image" content="https://notepadb.com/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The notepaDB window on GNOME: a SQL query, the schema sidebar and a result grid.">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "notepaDB",
+  "url": "https://notepadb.com/",
+  "description": "A notepad, but only for databases: a SQL scratchpad with autocomplete for the real tables and columns on your server. SQL Server, PostgreSQL, MySQL/MariaDB, Oracle and SQLite.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS, Windows",
+  "license": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html",
+  "downloadUrl": "https://pypi.org/project/notepadb/",
+  "sameAs": ["https://github.com/DrorMaor/notepadb", "https://pypi.org/project/notepadb/"],
+  "author": { "@type": "Person", "name": "Dror Maor" },
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<script src="/assets/site.js" defer></script>
+<script src="/assets/demo.js" defer></script>
+</head>
+<body>
+<!-- sprite:start -->
+<!-- sprite:end -->
+<svg width="0" height="0" class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-github" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></symbol>
+  <symbol id="i-win-min" viewBox="0 0 10 10"><path d="M0 5.5h10" stroke="currentColor" fill="none"/></symbol>
+  <symbol id="i-win-max" viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" rx="1.5" fill="none" stroke="currentColor"/></symbol>
+  <symbol id="i-win-close" viewBox="0 0 10 10"><path d="m.5.5 9 9m0-9-9 9" stroke="currentColor" fill="none"/></symbol>
+  <symbol id="i-replay" viewBox="0 0 16 16"><path d="M2.75 8a5.25 5.25 0 1 0 1.6-3.77" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M4.4 1.6v2.9h2.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="/" aria-label="notepaDB home">
+      <svg class="brand-mark" aria-hidden="true"><use href="#ni-logo"/></svg>
+      <span class="wordmark">notepa<b>DB</b></span>
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#demo">Demo</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#features">Features</a>
+      <a href="#engines">Engines</a>
+      <a href="#install">Install</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="header-actions">
+      <button class="hbtn jump" type="button" id="palette-open" aria-haspopup="dialog" aria-label="Jump to a section or command">
+        <svg aria-hidden="true"><use href="#ni-search"/></svg><span class="jump-label">Jump to</span><kbd>/</kbd>
+      </button>
+      <a class="hbtn" href="https://github.com/DrorMaor/notepadb">
+        <svg aria-hidden="true"><use href="#i-github"/></svg><span class="gh-label">GitHub</span><span class="sr-only"> repository</span>
+      </a>
+      <button class="hbtn theme-toggle" type="button" id="theme-toggle" aria-label="Switch to the dark theme">
+        <svg class="i-moon" aria-hidden="true"><use href="#ni-moon"/></svg>
+        <svg class="i-sun" aria-hidden="true"><use href="#ni-sun"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="kicker">
+        <a class="ver" href="https://pypi.org/project/notepadb/"><span class="ver-tag">PyPI</span> v<span data-pypi-version>0.1.1</span></a>
+        <span>Free software, GPL-2.0</span>
+      </p>
+      <h1 class="hero-title" id="hero-title">
+        <span class="line">A notepad.</span>
+        <span class="line">But only for <span class="kw">databases</span>.<span class="caret" aria-hidden="true"></span></span>
+      </h1>
+      <p class="lede">Connect to a server and start typing. notepaDB suggests the <strong>real table and column names</strong> from that database, runs your SQL when you press <kbd>F5</kbd>, and shows the results in a grid.</p>
+      <div class="cta">
+        <div class="cmd">
+          <code><span class="prompt" aria-hidden="true">$</span><span data-cta-cmd>pipx install notepadb</span></code>
+          <button class="btn btn-accent copy-btn" type="button" data-copy="pipx install notepadb" data-cta-copy>
+            <svg aria-hidden="true"><use href="#ni-copy"/></svg><span>Copy</span>
+          </button>
+        </div>
+        <a class="btn btn-pill" href="https://github.com/DrorMaor/notepadb">
+          <svg aria-hidden="true"><use href="#i-github"/></svg>Source code
+        </a>
+      </div>
+      <p class="cta-note" data-cta-note>First install pipx and Tk: <code>sudo apt install pipx python3-tk</code> on Debian, Ubuntu or Mint. <a href="#install">Fedora, Arch, openSUSE, macOS and Windows</a></p>
+      <script>(function(){var C={linux:["pipx install notepadb",'First install pipx and Tk: <code>sudo apt install pipx python3-tk</code> on Debian, Ubuntu or Mint. <a href="#install">Fedora, Arch, openSUSE, macOS and Windows</a>'],fed:["pipx install notepadb",'First install pipx and Tk: <code>sudo dnf install pipx python3-tkinter</code>. <a href="#install">Other distributions, macOS and Windows</a>'],arch:["pipx install notepadb",'First install pipx and Tk: <code>sudo pacman -S python-pipx tk</code>. <a href="#install">Other distributions, macOS and Windows</a>'],suse:["pipx install notepadb",'First install pipx and Tk: <code>sudo zypper install python3-pipx python3-tk</code>. <a href="#install">Other distributions, macOS and Windows</a>'],mac:["uv tool install --managed-python --python 3.14 notepadb",'Needs uv: <code>brew install uv</code>. <a href="#install">Why Python 3.14, and other platforms</a>'],windows:["uv tool install --python 3.14 notepadb",'Needs uv: <code>winget install --id=astral-sh.uv -e</code>. <a href="#install">Other ways to install</a>'],other:["pipx install notepadb",'notepaDB is a desktop app for Linux, macOS and Windows. <a href="#install">Install steps for each</a>']};var d=document.documentElement,o=d.dataset.os,k=o==="linux"&&C[d.dataset.distro]?d.dataset.distro:o;var c=C[k]||C.other;window.notepadbCta={cmd:c[0],note:c[1]};var h=document.currentScript.parentNode;h.querySelector("[data-cta-cmd]").textContent=c[0];h.querySelector("[data-cta-copy]").setAttribute("data-copy",c[0]);h.querySelector("[data-cta-note]").innerHTML=c[1]})();</script>
+    </div>
+
+    <ul class="facts boxed" aria-label="At a glance">
+      <li>
+        <svg aria-hidden="true"><use href="#ni-database"/></svg>
+        <div><b>Engines</b><span>SQL Server, PostgreSQL, MySQL, MariaDB, Oracle and SQLite</span></div>
+      </li>
+      <li>
+        <svg aria-hidden="true"><use href="#ni-sidebar"/></svg>
+        <div><b>Runs on</b><span>Linux, macOS and Windows</span></div>
+      </li>
+      <li>
+        <svg aria-hidden="true"><use href="#ni-terminal"/></svg>
+        <div><b>Needs</b><span>Python 3.9 to 3.14 with Tk</span></div>
+      </li>
+      <li>
+        <svg aria-hidden="true"><use href="#ni-key"/></svg>
+        <div><b>Asks for</b><span>No account. Sends no telemetry.</span></div>
+      </li>
+    </ul>
+  </div>
+
+  <div class="stage" id="demo">
+    <div class="wrap">
+      <div class="np-shell" id="np-shell">
+        <div class="np-globalbar" id="np-globalbar" hidden><svg class="np-gb-apple" aria-hidden="true" viewBox="0 0 14 17"><path fill="currentColor" d="M11.6 9c0-2.2 1.8-3.2 1.9-3.3-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.6.8-3.3.8s-1.7-.8-2.9-.8C2.6 4 1.2 4.9.4 6.3c-1.6 2.8-.4 6.9 1.2 9.1.8 1.1 1.7 2.3 2.8 2.3 1.1-.1 1.6-.7 2.9-.7 1.4 0 1.8.7 3 .7s1.9-1.1 2.7-2.2c.8-1.3 1.2-2.5 1.2-2.6-.1 0-2.6-1-2.6-3.9ZM9.4 2.6C10 1.9 10.4.9 10.3 0c-.9 0-1.9.6-2.6 1.3-.6.6-1.1 1.6-.9 2.6 1 .1 2-.5 2.6-1.3Z"/></svg><b class="np-gb-app">notepaDB</b></div>
+        <div class="np" id="np" role="region" aria-label="Interactive notepaDB demo with a sample baseball database">
+          <div class="np-titlebar">
+            <span class="np-lights" aria-hidden="true"><i></i><i></i><i></i></span>
+            <svg class="np-appicon" aria-hidden="true"><use href="#ni-logo"/></svg>
+            <span class="np-title" id="np-title">baseball1 • — notepaDB</span>
+            <span class="np-caption" aria-hidden="true">
+              <span class="cap cap-min"><svg><use href="#i-win-min"/></svg></span>
+              <span class="cap cap-max"><svg><use href="#i-win-max"/></svg></span>
+              <span class="cap cap-close"><svg><use href="#i-win-close"/></svg></span>
+              <span class="cap cap-gnome"><svg><use href="#ni-close"/></svg></span>
+            </span>
+          </div>
+          <div class="np-menubar" id="np-menubar" role="menubar" aria-label="Menu">
+            <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-menu="File">File</button>
+            <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-menu="Edit">Edit</button>
+            <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-menu="Connection">Connection</button>
+            <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-menu="Query">Query</button>
+            <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-menu="View">View</button>
+            <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-menu="Help">Help</button>
+          </div>
+          <script>(function(){var o=document.documentElement.dataset.os,c=o==="windows"?"windows":o==="mac"||o==="ios"?"mac":"linux";document.getElementById("np").dataset.os=c;document.getElementById("np-shell").dataset.os=c;if(c==="mac"){var g=document.getElementById("np-globalbar");g.hidden=false;g.appendChild(document.getElementById("np-menubar"))}})();</script>
+          <div class="np-toolbar" role="toolbar" aria-label="Toolbar">
+            <button class="np-b np-accent" type="button" data-act="run" title="Run the selection, or everything (F5). Ctrl+Enter runs just the statement at the caret"><svg aria-hidden="true"><use href="#ni-play"/></svg>Run</button>
+            <button class="np-b np-tool" type="button" data-act="stop" title="Stop the running query (Ctrl+Break)" disabled><svg aria-hidden="true"><use href="#ni-stop"/></svg>Stop</button>
+            <span class="np-sep" aria-hidden="true"></span>
+            <button class="np-b np-tool" type="button" data-act="connect" id="np-connect-btn" title="Connect to a database (Ctrl+K)"><svg aria-hidden="true"><use href="#ni-plug"/></svg><span id="np-connect-label">baseball</span></button>
+            <button class="np-b np-icon" type="button" data-act="refresh" title="Refresh schema (Ctrl+Shift+R)" aria-label="Refresh schema"><svg aria-hidden="true"><use href="#ni-refresh"/></svg></button>
+            <span class="np-sep" aria-hidden="true"></span>
+            <button class="np-b np-icon" type="button" data-act="newtab" title="New tab (Ctrl+T)" aria-label="New tab"><svg aria-hidden="true"><use href="#ni-tab"/></svg></button>
+            <button class="np-b np-icon np-opt" type="button" data-act="open" title="Open a SQL file (Ctrl+O)" aria-label="Open a SQL file"><svg aria-hidden="true"><use href="#ni-folder"/></svg></button>
+            <button class="np-b np-icon np-opt" type="button" data-act="save" title="Save (Ctrl+S)" aria-label="Save"><svg aria-hidden="true"><use href="#ni-save"/></svg></button>
+            <span class="np-sep np-opt" aria-hidden="true"></span>
+            <button class="np-b np-icon np-opt" type="button" data-act="format" title="Format SQL (Ctrl+Shift+F)" aria-label="Format SQL"><svg aria-hidden="true"><use href="#ni-format"/></svg></button>
+            <button class="np-b np-icon" type="button" data-act="history" title="Query history (Ctrl+Shift+H)" aria-label="Query history"><svg aria-hidden="true"><use href="#ni-history"/></svg></button>
+            <span class="np-spring"></span>
+            <button class="np-b np-icon np-opt" type="button" data-act="sidebar" title="Show or hide the schema sidebar (Ctrl+B)" aria-label="Show or hide the schema sidebar"><svg aria-hidden="true"><use href="#ni-sidebar"/></svg></button>
+            <button class="np-b np-icon" type="button" data-act="palette" title="Command palette (Ctrl+Shift+P)" aria-label="Command palette"><svg aria-hidden="true"><use href="#ni-terminal"/></svg></button>
+            <button class="np-b np-icon" type="button" data-act="theme" title="Switch the theme" aria-label="Switch between light and dark"><svg class="np-i-moon" aria-hidden="true"><use href="#ni-moon"/></svg><svg class="np-i-sun" aria-hidden="true"><use href="#ni-sun"/></svg></button>
+          </div>
+          <div class="np-tabs" id="np-tabs" role="tablist" aria-label="Query tabs">
+            <div class="np-tab" role="presentation"><button type="button" role="tab" aria-selected="true">baseball1 •</button><span class="np-tabx" aria-hidden="true"><svg><use href="#ni-close"/></svg></span></div>
+          </div>
+          <div class="np-body" id="np-body">
+            <aside class="np-side" aria-label="Schema">
+              <div class="np-side-head"><span>Schema</span><button class="np-b np-icon np-mini" type="button" data-act="refresh" title="Refresh schema (Ctrl+Shift+R)" aria-label="Refresh schema"><svg aria-hidden="true"><use href="#ni-refresh"/></svg></button></div>
+              <div class="np-filter"><input type="text" id="np-filter" placeholder="Filter tables and columns" aria-label="Filter tables and columns" autocomplete="off" spellcheck="false"></div>
+              <ul class="np-tree" id="np-tree" role="tree" aria-label="Databases, tables and columns">
+                <li role="none"><div class="np-row d0 is-active" role="treeitem" aria-expanded="true" aria-level="1" aria-selected="false" tabindex="0"><span class="tw"><svg aria-hidden="true"><use href="#ni-chev_down"/></svg></span><svg class="ti ti-db" aria-hidden="true"><use href="#ni-database"/></svg>baseball.db  (active)</div>
+                  <ul role="group">
+                    <li role="none"><div class="np-row d1" role="treeitem" aria-expanded="false" aria-level="2" aria-selected="false" tabindex="-1"><span class="tw"><svg aria-hidden="true"><use href="#ni-chev_right"/></svg></span><svg class="ti" aria-hidden="true"><use href="#ni-table"/></svg>games</div></li>
+                    <li role="none"><div class="np-row d1" role="treeitem" aria-expanded="false" aria-level="2" aria-selected="false" tabindex="-1"><span class="tw"><svg aria-hidden="true"><use href="#ni-chev_right"/></svg></span><svg class="ti" aria-hidden="true"><use href="#ni-table"/></svg>players</div></li>
+                    <li role="none"><div class="np-row d1" role="treeitem" aria-expanded="true" aria-level="2" aria-selected="false" tabindex="-1"><span class="tw"><svg aria-hidden="true"><use href="#ni-chev_down"/></svg></span><svg class="ti" aria-hidden="true"><use href="#ni-table"/></svg>teams</div>
+                      <ul role="group">
+                        <li role="none"><div class="np-row d2" role="treeitem" aria-level="3" aria-selected="false" tabindex="-1"><span class="tw"></span><svg class="ti ti-col" aria-hidden="true"><use href="#ni-column"/></svg>team_id  <span class="ty">integer</span></div></li>
+                        <li role="none"><div class="np-row d2" role="treeitem" aria-level="3" aria-selected="false" tabindex="-1"><span class="tw"></span><svg class="ti ti-col" aria-hidden="true"><use href="#ni-column"/></svg>team_name  <span class="ty">text</span></div></li>
+                        <li role="none"><div class="np-row d2" role="treeitem" aria-level="3" aria-selected="false" tabindex="-1"><span class="tw"></span><svg class="ti ti-col" aria-hidden="true"><use href="#ni-column"/></svg>city  <span class="ty">text</span></div></li>
+                        <li role="none"><div class="np-row d2" role="treeitem" aria-level="3" aria-selected="false" tabindex="-1"><span class="tw"></span><svg class="ti ti-col" aria-hidden="true"><use href="#ni-column"/></svg>home_stadium  <span class="ty">text</span></div></li>
+                        <li role="none"><div class="np-row d2" role="treeitem" aria-level="3" aria-selected="false" tabindex="-1"><span class="tw"></span><svg class="ti ti-col" aria-hidden="true"><use href="#ni-column"/></svg>founded_year  <span class="ty">integer</span></div></li>
+                      </ul>
+                    </li>
+                  </ul>
+                </li>
+              </ul>
+              <div class="np-empty np-side-empty" id="np-side-empty" hidden>
+                <svg aria-hidden="true"><use href="#ni-database"/></svg>
+                <b>Not connected</b>
+                <span>Connect to browse the databases, tables and columns you can query.</span>
+                <button class="np-b np-accent" type="button" data-act="connect">Connect…</button>
+              </div>
+            </aside>
+            <div class="np-main">
+              <div class="np-card np-editor-card">
+                <div class="np-find" id="np-find" hidden>
+                  <div class="np-find-row">
+                    <svg class="np-find-i" aria-hidden="true"><use href="#ni-search"/></svg>
+                    <input type="text" id="np-find-input" placeholder="Find" aria-label="Find" autocomplete="off" spellcheck="false">
+                    <span class="np-find-count" id="np-find-count" aria-live="polite"></span>
+                    <button class="np-b np-icon np-mini" type="button" data-find="prev" title="Previous match (Shift+Enter)" aria-label="Previous match"><svg aria-hidden="true"><use href="#ni-arrow_up"/></svg></button>
+                    <button class="np-b np-icon np-mini" type="button" data-find="next" title="Next match (Enter)" aria-label="Next match"><svg aria-hidden="true"><use href="#ni-arrow_down"/></svg></button>
+                    <button class="np-b np-tool np-mini np-case" type="button" data-find="case" aria-pressed="false" title="Match case">Aa</button>
+                    <button class="np-b np-icon np-mini" type="button" data-find="toggle" title="Show replace (Ctrl+H)" aria-label="Show replace" aria-expanded="false"><svg aria-hidden="true"><use href="#ni-replace"/></svg></button>
+                    <span class="np-spring"></span>
+                    <button class="np-b np-icon np-mini" type="button" data-find="close" title="Close (Esc)" aria-label="Close find"><svg aria-hidden="true"><use href="#ni-close"/></svg></button>
+                  </div>
+                  <div class="np-find-row" id="np-replace-row" hidden>
+                    <svg class="np-find-i" aria-hidden="true"><use href="#ni-replace"/></svg>
+                    <input type="text" id="np-replace-input" placeholder="Replace with" aria-label="Replace with" autocomplete="off" spellcheck="false">
+                    <button class="np-b np-tool np-mini" type="button" data-find="replace">Replace</button>
+                    <button class="np-b np-tool np-mini" type="button" data-find="all">Replace all</button>
+                  </div>
+                </div>
+                <div class="np-editor">
+                  <pre class="np-gutter" id="np-gutter" aria-hidden="true">1</pre>
+                  <div class="np-code">
+                    <pre class="np-hl" id="np-hl" aria-hidden="true"><span class="hl-in"><span class="cl"><span class="k">SELECT</span> * <span class="k">FROM</span> teams;</span>
+</span></pre>
+                    <textarea class="np-input" id="np-input" aria-label="SQL editor. F5 runs the selection or everything, Control+Enter the statement at the caret, Control+K connects." spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off">SELECT * FROM teams;</textarea>
+                    <span class="np-hint" id="np-hint" aria-hidden="true" hidden>Type SQL here  ·  Ctrl+Enter runs the statement at the caret  ·  F5 runs everything</span>
+                    <ul class="np-ac" id="np-ac" role="listbox" aria-label="Suggestions" hidden></ul>
+                  </div>
+                </div>
+              </div>
+              <div class="np-card np-results-card">
+                <div class="np-rtabs" id="np-rtabs" role="tablist" aria-label="Results">
+                  <button class="np-rtab" type="button" role="tab" aria-selected="true">Result  ·  5</button>
+                  <button class="np-rtab" type="button" role="tab" aria-selected="false" tabindex="-1">Messages</button>
+                </div>
+                <div class="np-rbody" id="np-rbody">
+                  <div class="np-gridwrap" id="np-gridwrap" role="tabpanel" tabindex="0" aria-label="Query results">
+                    <table class="np-grid">
+                      <thead><tr><th class="ix" scope="col"><span class="sr-only">Row</span></th><th scope="col">team_id</th><th scope="col">team_name</th><th scope="col">city</th><th scope="col">home_stadium</th><th scope="col">founded_year</th></tr></thead>
+                      <tbody>
+                        <tr><th class="ix" scope="row">1</th><td>1</td><td>Astros</td><td>Houston</td><td>Minute Maid Park</td><td>1962</td></tr>
+                        <tr><th class="ix" scope="row">2</th><td>2</td><td>Yankees</td><td>New York</td><td>Yankee Stadium</td><td>1903</td></tr>
+                        <tr><th class="ix" scope="row">3</th><td>3</td><td>Dodgers</td><td>Los Angeles</td><td>Dodger Stadium</td><td>1883</td></tr>
+                        <tr><th class="ix" scope="row">4</th><td>4</td><td>Cubs</td><td>Chicago</td><td>Wrigley Field</td><td>1876</td></tr>
+                        <tr><th class="ix" scope="row">5</th><td>5</td><td>Red Sox</td><td>Boston</td><td>Fenway Park</td><td>1901</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <pre class="np-log" id="np-log" role="tabpanel" aria-label="Messages" tabindex="0" hidden></pre>
+                </div>
+                <div class="np-rfoot">
+                  <span id="np-rfoot-label">5 rows  ·  5 columns  ·  1 ms</span>
+                  <button class="np-b np-tool np-mini" type="button" data-act="export"><svg aria-hidden="true"><use href="#ni-export"/></svg>Export CSV</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="np-status" id="np-status">
+            <span class="np-st-msg is-ok" id="np-st-msg"><svg aria-hidden="true"><use href="#ni-success"/></svg><span id="np-st-text">5 rows  ·  1 ms</span></span>
+            <span class="np-st-pos" id="np-st-pos">Ln 1, Col 21</span>
+            <span class="np-st-time" id="np-st-time">1 ms</span>
+            <button class="np-st-conn is-on" type="button" id="np-st-conn" data-act="connect" title="Connection — click to change (Ctrl+K)"><svg aria-hidden="true"><use href="#ni-dot"/></svg><span id="np-st-conn-text">baseball.db  ·  SQLite</span></button>
+          </div>
+          <div class="np-menu" id="np-menu" role="menu" hidden></div>
+          <div class="np-modal" id="np-modal" hidden></div>
+          <div class="np-palette" id="np-palette" hidden></div>
+        </div>
+      </div>
+      <div class="demo-caption">
+        <div class="os-switch" id="np-os" role="group" aria-label="Window style">
+          <button type="button" data-os="linux" aria-pressed="true">GNOME</button>
+          <button type="button" data-os="windows" aria-pressed="false">Windows</button>
+          <button type="button" data-os="mac" aria-pressed="false">macOS</button>
+        </div>
+        <p id="demo-status"><strong>Live demo.</strong> This window is a browser copy of notepaDB with a real SQLite database inside. Click into the editor, change the query and press <kbd>F5</kbd>.</p>
+        <button class="btn btn-pill btn-sm" type="button" id="demo-replay" hidden><svg aria-hidden="true"><use href="#i-replay"/></svg><span>Replay</span></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band band-steps" id="how" aria-labelledby="steps-title">
+  <div class="wrap">
+    <h2 class="steps-title" id="steps-title">Three keys from question to answer</h2>
+    <ol class="steps">
+      <li class="step">
+        <span class="step-keys"><kbd>Ctrl</kbd><kbd>K</kbd></span>
+        <h3>Connect</h3>
+        <p>Pick SQL Server, PostgreSQL, MySQL, MariaDB or Oracle and a server, or a SQLite file. Each tab keeps its own connection.</p>
+      </li>
+      <li class="step">
+        <span class="step-keys step-type" aria-hidden="true"><code>t.<b>team_n</b></code></span>
+        <h3>Type</h3>
+        <p>Tables after <code>FROM</code> and <code>JOIN</code>, columns after an alias and a dot, all read from the live schema.</p>
+      </li>
+      <li class="step">
+        <span class="step-keys"><kbd>F5</kbd></span>
+        <h3>Run</h3>
+        <p>F5 runs the selection or the whole tab. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> runs just the statement under the caret.</p>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section class="section" id="screenshots" aria-labelledby="shots-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="shots-title">The real app, on GNOME</h2>
+      <p>The window above is rebuilt in HTML so you can try it here. These are screenshots of the desktop app itself on GNOME 48, with GNOME's default fonts and settings. Switch this page between light and dark to see both themes.</p>
+    </div>
+    <div class="tour" data-tabs>
+      <div class="switcher" role="tablist" aria-label="Screenshots">
+        <button type="button" role="tab" id="shot-tab-main" aria-controls="shot-main" aria-selected="true"><svg aria-hidden="true"><use href="#ni-table"/></svg>Results</button>
+        <button type="button" role="tab" id="shot-tab-complete" aria-controls="shot-complete" aria-selected="false" tabindex="-1"><svg aria-hidden="true"><use href="#ni-column"/></svg>Autocomplete</button>
+        <button type="button" role="tab" id="shot-tab-palette" aria-controls="shot-palette" aria-selected="false" tabindex="-1"><svg aria-hidden="true"><use href="#ni-terminal"/></svg>Command palette</button>
+        <button type="button" role="tab" id="shot-tab-find" aria-controls="shot-find" aria-selected="false" tabindex="-1"><svg aria-hidden="true"><use href="#ni-search"/></svg>Find</button>
+        <button type="button" role="tab" id="shot-tab-connect" aria-controls="shot-connect" aria-selected="false" tabindex="-1"><svg aria-hidden="true"><use href="#ni-plug"/></svg>Connect</button>
+        <button type="button" role="tab" id="shot-tab-keys" aria-controls="shot-keys" aria-selected="false" tabindex="-1"><svg aria-hidden="true"><use href="#ni-key"/></svg>Shortcuts</button>
+      </div>
+      <!-- shots:start -->
+      <!-- shots:end -->
+    </div>
+  </div>
+</section>
+
+<section class="section band" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="features-title">Made for the SQL you write every day</h2>
+      <p>Quick lookups, one-off fixes, the script you run twice a week. notepaDB keeps the parts of a database IDE you use for that work, and it opens straight to an editor.</p>
+    </div>
+    <div class="features">
+      <article class="feature">
+        <div class="vig vig-ac" aria-hidden="true">
+          <div class="ed"><span class="k">SELECT</span> p.last_name, t.<span class="cur"></span>
+<span class="k">FROM</span> players p
+<span class="k">JOIN</span> teams t <span class="k">ON</span> t.team_id = p.team_id</div>
+          <ul class="pop" data-cycle><li class="on"><span>city</span><i>column</i></li><li><span>founded_year</span><i>column</i></li><li><span>home_stadium</span><i>column</i></li><li><span>team_id</span><i>column</i></li><li><span>team_name</span><i>column</i></li></ul>
+        </div>
+        <h3>Autocomplete from the live schema</h3>
+        <p>Suggestions come from the database you're connected to. Type <code>FROM</code> and pick a table; type an alias and a dot and pick one of its columns.</p>
+      </article>
+
+      <article class="feature">
+        <div class="vig vig-tabs" aria-hidden="true" data-cycle-group>
+          <div class="vtabs" data-cycle><span class="on">Sales1 •</span><span>Sales2</span><span>league1</span><span>app1</span></div>
+          <div class="vstatus" data-cycle>
+            <span class="on"><i></i>sql01 / Sales  ·  SQL Server</span>
+            <span><i></i>sql01 / Sales  ·  SQL Server</span>
+            <span><i></i>pg01 / league  ·  PostgreSQL</span>
+            <span><i></i>app.db  ·  SQLite</span>
+          </div>
+        </div>
+        <h3>Every tab is its own session</h3>
+        <p>Each tab has its own connection, schema sidebar and results, like query windows in SSMS. Tabs name themselves after their database.</p>
+      </article>
+
+      <article class="feature">
+        <div class="vig vig-run" aria-hidden="true">
+          <div class="vkeys" data-cycle>
+            <div class="on"><span><kbd>F5</kbd></span><b>Selection, or everything</b></div>
+            <div><span><kbd>Ctrl</kbd><kbd>Enter</kbd></span><b>Statement at the caret</b></div>
+            <div><span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Enter</kbd></span><b>Everything in the tab</b></div>
+          </div>
+        </div>
+        <h3>Run exactly what you mean</h3>
+        <p>Keep a dozen queries in one tab and run the one under the caret. Batches split on semicolons, but not the ones inside strings or comments.</p>
+      </article>
+
+      <article class="feature">
+        <div class="vig vig-batch" aria-hidden="true">
+          <div class="vrtabs"><span class="on">Result 1  ·  3</span><span>Result 2  ·  12</span><span>Messages</span></div>
+          <div class="mini-grid">
+            <table>
+              <thead><tr><th>order_id</th><th>status</th><th>total</th></tr></thead>
+              <tbody>
+                <tr><td>1042</td><td>shipped</td><td class="r">129.00</td></tr>
+                <tr><td>1043</td><td>pending</td><td class="r">54.50</td></tr>
+                <tr><td>1044</td><td>pending</td><td class="null">NULL</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="vfoot">3 rows  ·  3 columns  ·  38 ms</div>
+        </div>
+        <h3>One tab per result set</h3>
+        <p>A script with five <code>SELECT</code>s gives you five result tabs. Messages keeps a timestamped log of row counts, timings and errors.</p>
+      </article>
+
+      <article class="feature">
+        <div class="vig vig-tree" aria-hidden="true">
+          <div class="tree">
+            <div class="db act"><svg><use href="#ni-database"/></svg>Sales  (active)</div>
+            <div class="d1"><svg><use href="#ni-table"/></svg>dbo.customers</div>
+            <div class="d1 sel"><svg><use href="#ni-table"/></svg>dbo.orders</div>
+            <div class="d1"><svg><use href="#ni-table"/></svg>dbo.products</div>
+            <div class="db"><svg><use href="#ni-database"/></svg>Archive</div>
+            <div class="db"><svg><use href="#ni-database"/></svg>Reporting</div>
+          </div>
+          <div class="ctx" data-cycle data-cycle-skip="hr">
+            <div class="on">Select top 1000 rows</div>
+            <div>Script as CREATE TABLE</div>
+            <div>Copy column list</div>
+            <div>Copy table name</div>
+            <hr>
+            <div>Export table to CSV…</div>
+          </div>
+        </div>
+        <h3>The whole server in a sidebar</h3>
+        <p>Every database on the server, with a filter and type-to-jump. Double-click a database to switch to it, drag names into the editor, right-click a table for the usual jobs.</p>
+      </article>
+
+      <article class="feature">
+        <div class="vig vig-pal" aria-hidden="true">
+          <div class="pal">
+            <div class="pal-in"><svg><use href="#ni-terminal"/></svg><span>ord<i></i></span></div>
+            <ul data-cycle>
+              <li class="on"><span>Table: dbo.orders</span><em>select top 1000 rows</em></li>
+              <li><span>Table: dbo.order_items</span><em>select top 1000 rows</em></li>
+              <li><span>Format SQL</span><em>Ctrl+Shift+F</em></li>
+              <li><span>Use database: Reporting</span><em></em></li>
+            </ul>
+          </div>
+        </div>
+        <h3>A command palette</h3>
+        <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> finds any command by name, opens any table, and switches databases, without leaving the keyboard.</p>
+      </article>
+
+      <article class="feature">
+        <div class="vig vig-hist" aria-hidden="true">
+          <div class="hist">
+            <table>
+              <thead><tr><th>Time</th><th class="r">Duration</th><th class="r">Rows</th><th>SQL</th></tr></thead>
+              <tbody data-cycle>
+                <tr class="on"><td>14:02</td><td class="r">38 ms</td><td class="r">3</td><td class="sql">SELECT order_id, status, total…</td></tr>
+                <tr><td>13:57</td><td class="r">12 ms</td><td class="r">1</td><td class="sql">UPDATE orders SET status = 's…</td></tr>
+                <tr><td>13:51</td><td class="r">4 ms</td><td class="r">20</td><td class="sql">SELECT TOP 20 * FROM dbo.cu…</td></tr>
+                <tr><td>13:44</td><td class="r">231 ms</td><td class="r">1,000</td><td class="sql">SELECT TOP 1000 * FROM [db…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="hist-actions"><span class="vbtn">Insert</span><span class="vbtn acc">Insert &amp; run</span></div>
+        </div>
+        <h3>History of what you ran</h3>
+        <p>Your last 300 statements, with time, duration, rows and connection. Filter them, preview one with highlighting, and put it back in the editor, or run it again.</p>
+      </article>
+
+      <article class="feature">
+        <div class="vig vig-conn" aria-hidden="true">
+          <div class="saved">
+            <b>Saved connections</b>
+            <span class="on">reporting (PostgreSQL)</span>
+            <span>sales (SQL Server)</span>
+            <span>warehouse (Oracle)</span>
+          </div>
+          <div class="test"><svg><use href="#ni-success"/></svg>Connected in 41 ms · 6 databases visible.</div>
+        </div>
+        <h3>Saved connections</h3>
+        <p>Save a connection under a name and pick it next time. <b>Test connection</b> checks the details first, and passwords are never written to disk.</p>
+      </article>
+
+      <article class="feature">
+        <div class="vig vig-rec" aria-hidden="true">
+          <div class="mb">
+            <svg class="mb-i"><use href="#ni-question"/></svg>
+            <div>
+              <b>Recover unsaved work?</b>
+              <span>notepaDB didn't close cleanly last time. 2 tabs with unsaved changes can be restored.</span>
+              <div class="mb-actions"><span class="vbtn">Discard</span><span class="vbtn acc">Recover</span></div>
+            </div>
+          </div>
+        </div>
+        <h3>Work that survives a crash</h3>
+        <p>Unsaved tabs are autosaved every 30 seconds and offered back after a crash. notepaDB can also reopen your tabs on startup and reconnect the ones that need no password.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="linux" aria-labelledby="linux-title">
+  <div class="wrap linux-grid">
+    <div class="section-head">
+      <h2 id="linux-title">At home on a Linux desktop</h2>
+      <p>notepaDB reads your desktop's settings when it starts, so on GNOME it matches the apps around it.</p>
+      <ul class="boxed rows">
+        <li><svg aria-hidden="true"><use href="#ni-moon"/></svg><div><b>Light or dark, your choice</b><span>Follows the GNOME style setting, or stays light or dark: <span class="nowrap">View → Theme</span>.</span></div></li>
+        <li><svg aria-hidden="true"><use href="#ni-format"/></svg><div><b>Your fonts</b><span>Uses your interface and monospace fonts. That's Adwaita Sans and Adwaita Mono on GNOME 48 and later, and Cantarell on Debian.</span></div></li>
+        <li><svg aria-hidden="true"><use href="#ni-sidebar"/></svg><div><b>Adwaita colors and controls</b><span>GNOME's blue, rounded buttons and fields, underline tabs and thin scrollbars.</span></div></li>
+        <li><svg aria-hidden="true"><use href="#ni-search"/></svg><div><b>Sharp at any scale</b><span>Icons are drawn from vector shapes at startup, so they stay crisp at 200% scaling.</span></div></li>
+        <li><svg aria-hidden="true"><use href="#ni-folder"/></svg><div><b>The GNOME file chooser</b><span>Open and Save use it through zenity, when zenity is installed.</span></div></li>
+        <li><svg aria-hidden="true"><use href="#ni-terminal"/></svg><div><b>X11 and Wayland</b><span>Tk draws through X11, so on a Wayland session notepaDB runs through XWayland, like other Tk apps.</span></div></li>
+      </ul>
+    </div>
+    <figure class="compare" id="compare">
+      <div class="compare-frame">
+        <!-- compare:start -->
+        <!-- compare:end -->
+        <span class="compare-line" aria-hidden="true"><span class="compare-knob"></span></span>
+        <input class="compare-range" type="range" id="compare-range" min="0" max="100" value="50" aria-label="Move the divider between the light and dark screenshots">
+      </div>
+      <figcaption><span>Light</span><span>Drag to compare the two themes</span><span>Dark</span></figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section band" id="engines" aria-labelledby="engines-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="engines-title">Five engines. One window.</h2>
+      <p>Pick the engine in the Connect dialog. After that everything works the same way: the editor, autocomplete, schema sidebar, results and history. notepaDB writes the engine-specific SQL for you.</p>
+    </div>
+    <div class="engines" data-tabs>
+      <div class="switcher" role="tablist" aria-label="Database engines">
+        <button type="button" role="tab" id="tab-mssql" aria-controls="panel-mssql" aria-selected="true" data-engine="sqlserver">SQL Server</button>
+        <button type="button" role="tab" id="tab-pg" aria-controls="panel-pg" aria-selected="false" tabindex="-1" data-engine="postgres">PostgreSQL</button>
+        <button type="button" role="tab" id="tab-mysql" aria-controls="panel-mysql" aria-selected="false" tabindex="-1" data-engine="mysql">MySQL / MariaDB</button>
+        <button type="button" role="tab" id="tab-ora" aria-controls="panel-ora" aria-selected="false" tabindex="-1" data-engine="oracle">Oracle</button>
+        <button type="button" role="tab" id="tab-sqlite" aria-controls="panel-sqlite" aria-selected="false" tabindex="-1" data-engine="sqlite">SQLite</button>
+      </div>
+      <div class="engine-body">
+        <figure class="engine-figure" aria-hidden="true">
+          <div class="np-dialog np-connect-dialog engine-dialog" id="engine-dialog" inert></div>
+          <figcaption>The Connect dialog changes with the engine. For SQLite it asks for a file instead of a server.</figcaption>
+        </figure>
+        <div class="engine-panels">
+          <div class="tabpanel" role="tabpanel" id="panel-mssql" aria-labelledby="tab-mssql" tabindex="0">
+            <dl class="spec">
+              <dt>Driver</dt><dd><code>pyodbc</code> with Microsoft's ODBC Driver 18 or 17 for SQL Server</dd>
+              <dt>Sign in</dt><dd>Windows authentication or SQL Server login, with <b>Encrypt connection</b> and <b>Trust server certificate</b></dd>
+              <dt>Databases</dt><dd>Lists every database on the server. Switching runs <code>USE [db]</code> on the same connection.</dd>
+              <dt>Cancel</dt><dd>Cancels the running statement through the ODBC cursor</dd>
+            </dl>
+            <div class="gen">
+              <figure>
+                <figcaption>Right-click a table → Select top 1000 rows</figcaption>
+                <pre class="code"><span class="k">SELECT</span> <span class="k">TOP</span> <span class="n">1000</span> * <span class="k">FROM</span> [sales].[orders]</pre>
+              </figure>
+              <figure>
+                <figcaption>Explain plan <kbd>Ctrl</kbd>+<kbd>L</kbd></figcaption>
+                <pre class="code"><span class="k">SET</span> SHOWPLAN_ALL <span class="k">ON</span>;
+<span class="k">SELECT</span> * <span class="k">FROM</span> orders <span class="k">WHERE</span> id = <span class="n">42</span>;
+<span class="k">SET</span> SHOWPLAN_ALL <span class="k">OFF</span>;</pre>
+              </figure>
+            </div>
+          </div>
+          <div class="tabpanel" role="tabpanel" id="panel-pg" aria-labelledby="tab-pg" tabindex="0" hidden>
+            <dl class="spec">
+              <dt>Driver</dt><dd><code>psycopg2</code></dd>
+              <dt>Sign in</dt><dd>Username and password, or no password for peer and trust authentication. <b>Encrypt connection</b> asks for TLS.</dd>
+              <dt>Databases</dt><dd>Lists every database. Switching opens a new connection to that database, since a Postgres connection stays on one.</dd>
+              <dt>Cancel</dt><dd>Sends a cancel request for the running query</dd>
+            </dl>
+            <div class="gen">
+              <figure>
+                <figcaption>Right-click a table → Select top 1000 rows</figcaption>
+                <pre class="code"><span class="k">SELECT</span> * <span class="k">FROM</span> <span class="s">"sales"</span>.<span class="s">"orders"</span> <span class="k">LIMIT</span> <span class="n">1000</span></pre>
+              </figure>
+              <figure>
+                <figcaption>Explain plan <kbd>Ctrl</kbd>+<kbd>L</kbd></figcaption>
+                <pre class="code"><span class="k">EXPLAIN</span> <span class="k">SELECT</span> * <span class="k">FROM</span> orders <span class="k">WHERE</span> id = <span class="n">42</span></pre>
+              </figure>
+            </div>
+          </div>
+          <div class="tabpanel" role="tabpanel" id="panel-mysql" aria-labelledby="tab-mysql" tabindex="0" hidden>
+            <dl class="spec">
+              <dt>Driver</dt><dd><code>mysql-connector-python</code>, which also works with MariaDB</dd>
+              <dt>Sign in</dt><dd>Username and password, or no password. <b>Encrypt connection</b> turns TLS on or off.</dd>
+              <dt>Databases</dt><dd>Lists every database. Switching changes the connection's current database.</dd>
+              <dt>Cancel</dt><dd>Opens a second connection and runs <code>KILL QUERY</code> on the first, the way the <code>mysql</code> client does</dd>
+            </dl>
+            <div class="gen">
+              <figure>
+                <figcaption>Right-click a table → Select top 1000 rows</figcaption>
+                <pre class="code"><span class="k">SELECT</span> * <span class="k">FROM</span> `orders` <span class="k">LIMIT</span> <span class="n">1000</span></pre>
+              </figure>
+              <figure>
+                <figcaption>Explain plan <kbd>Ctrl</kbd>+<kbd>L</kbd></figcaption>
+                <pre class="code"><span class="k">EXPLAIN</span> <span class="k">SELECT</span> * <span class="k">FROM</span> orders <span class="k">WHERE</span> id = <span class="n">42</span></pre>
+              </figure>
+            </div>
+          </div>
+          <div class="tabpanel" role="tabpanel" id="panel-ora" aria-labelledby="tab-ora" tabindex="0" hidden>
+            <dl class="spec">
+              <dt>Driver</dt><dd><code>oracledb</code> in thin mode, so there's no Instant Client to install</dd>
+              <dt>Sign in</dt><dd>Username, password and service name, over TCP, or TCPS with <b>Encrypt connection</b></dd>
+              <dt>Databases</dt><dd>One service per connection. The sidebar shows every schema your account can see, minus Oracle's system schemas.</dd>
+              <dt>Cancel</dt><dd>Sends a break for the running query</dd>
+            </dl>
+            <div class="gen">
+              <figure>
+                <figcaption>Right-click a table → Select top 1000 rows</figcaption>
+                <pre class="code"><span class="k">SELECT</span> * <span class="k">FROM</span> <span class="s">"SALES"</span>.<span class="s">"ORDERS"</span> <span class="k">FETCH FIRST</span> <span class="n">1000</span> <span class="k">ROWS ONLY</span></pre>
+              </figure>
+              <figure>
+                <figcaption>Explain plan <kbd>Ctrl</kbd>+<kbd>L</kbd></figcaption>
+                <pre class="code"><span class="k">EXPLAIN PLAN FOR</span> <span class="k">SELECT</span> * <span class="k">FROM</span> orders <span class="k">WHERE</span> id = <span class="n">42</span>;
+<span class="k">SELECT</span> * <span class="k">FROM</span> <span class="k">TABLE</span>(DBMS_XPLAN.DISPLAY());</pre>
+              </figure>
+            </div>
+          </div>
+          <div class="tabpanel" role="tabpanel" id="panel-sqlite" aria-labelledby="tab-sqlite" tabindex="0" hidden>
+            <dl class="spec">
+              <dt>Driver</dt><dd>Python's built-in <code>sqlite3</code>, so nothing to install</dd>
+              <dt>Sign in</dt><dd>Nothing to sign in to. Pick a <code>.db</code>, <code>.sqlite</code>, <code>.sqlite3</code> or <code>.db3</code> file.</dd>
+              <dt>Databases</dt><dd>One file per connection</dd>
+              <dt>Cancel</dt><dd>Interrupts the running query</dd>
+            </dl>
+            <div class="gen">
+              <figure>
+                <figcaption>Right-click a table → Select top 1000 rows</figcaption>
+                <pre class="code"><span class="k">SELECT</span> * <span class="k">FROM</span> <span class="s">"orders"</span> <span class="k">LIMIT</span> <span class="n">1000</span></pre>
+              </figure>
+              <figure>
+                <figcaption>Explain plan <kbd>Ctrl</kbd>+<kbd>L</kbd></figcaption>
+                <pre class="code"><span class="k">EXPLAIN QUERY PLAN</span> <span class="k">SELECT</span> * <span class="k">FROM</span> orders <span class="k">WHERE</span> id = <span class="n">42</span></pre>
+              </figure>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="ssms" aria-labelledby="ssms-title">
+  <div class="wrap split">
+    <div class="section-head">
+      <h2 id="ssms-title">Coming from SSMS?</h2>
+      <p>Your habits carry over. SQL Server Management Studio runs only on Windows, and Microsoft retired Azure Data Studio on February 28, 2026. notepaDB runs on Linux, macOS and Windows.</p>
+      <p class="aside">Prefer to work inside an editor? Microsoft points Azure Data Studio users to its MSSQL extension for VS Code, which also runs on all three. notepaDB is the small window you open for a quick query.</p>
+    </div>
+    <div class="ssms">
+      <table class="ssms-table">
+        <caption class="sr-only">SSMS commands and their notepaDB equivalents</caption>
+        <thead><tr><th scope="col">In SSMS</th><th scope="col">In notepaDB</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Execute <kbd>F5</kbd></th><td>Run <kbd>F5</kbd>: the selection, or everything</td></tr>
+          <tr><th scope="row">Execute the current statement</th><td><span class="nowrap"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span> runs the statement under the caret</td></tr>
+          <tr><th scope="row">Display Estimated Execution Plan <span class="nowrap"><kbd>Ctrl</kbd>+<kbd>L</kbd></span></th><td>Explain plan <span class="nowrap"><kbd>Ctrl</kbd>+<kbd>L</kbd></span>, for all five engines</td></tr>
+          <tr><th scope="row">Select Top 1000 Rows</th><td>Right-click a table → Select top 1000 rows, in a new tab</td></tr>
+          <tr><th scope="row">Script Table as → CREATE To</th><td>Right-click a table → Script as CREATE TABLE</td></tr>
+          <tr><th scope="row">Query windows, SQLQuery1.sql</th><td>Tabs named after their database: Sales1, Sales2</td></tr>
+          <tr><th scope="row">Object Explorer</th><td>Schema sidebar with every database, a filter, type-to-jump and drag-and-drop</td></tr>
+          <tr><th scope="row">Messages tab</th><td>Messages tab, with a timestamp on every line</td></tr>
+          <tr><th scope="row">Windows Authentication</th><td>Windows authentication or SQL Server login, Encrypt connection, Trust server certificate</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="section band" id="keyboard" aria-labelledby="keyboard-title">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 id="keyboard-title">Keyboard first</h2>
+      <p>F5 runs, the same key as in SSMS. Everything else has a shortcut too, and <kbd>F1</kbd> in notepaDB shows this list.</p>
+    </div>
+    <div class="shortcuts">
+      <section class="sc-group" aria-labelledby="sc-query">
+        <h3 id="sc-query">Query</h3>
+        <dl>
+          <div><dt>Run selection, or everything</dt><dd><kbd>F5</kbd></dd></div>
+          <div><dt>Run the statement at the caret</dt><dd><kbd>Ctrl</kbd><kbd>Enter</kbd></dd></div>
+          <div><dt>Run everything</dt><dd><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Enter</kbd></dd></div>
+          <div><dt>Stop the running query</dt><dd><kbd>Ctrl</kbd><kbd>Break</kbd></dd></div>
+          <div><dt>Explain plan</dt><dd><kbd>Ctrl</kbd><kbd>L</kbd></dd></div>
+          <div><dt>Query history</dt><dd><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>H</kbd></dd></div>
+        </dl>
+      </section>
+      <section class="sc-group" aria-labelledby="sc-conn">
+        <h3 id="sc-conn">Connection</h3>
+        <dl>
+          <div><dt>Connect…</dt><dd><kbd>Ctrl</kbd><kbd>K</kbd></dd></div>
+          <div><dt>Refresh schema</dt><dd><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>R</kbd></dd></div>
+          <div><dt>Show or hide the schema sidebar</dt><dd><kbd>Ctrl</kbd><kbd>B</kbd></dd></div>
+        </dl>
+      </section>
+      <section class="sc-group" aria-labelledby="sc-editor">
+        <h3 id="sc-editor">Editor</h3>
+        <dl>
+          <div><dt>Find</dt><dd><kbd>Ctrl</kbd><kbd>F</kbd></dd></div>
+          <div><dt>Find next or previous</dt><dd><kbd>F3</kbd><span class="or">/</span><kbd>Shift</kbd><kbd>F3</kbd></dd></div>
+          <div><dt>Replace</dt><dd><kbd>Ctrl</kbd><kbd>H</kbd></dd></div>
+          <div><dt>Toggle line comment</dt><dd><kbd>Ctrl</kbd><kbd>/</kbd></dd></div>
+          <div><dt>Format SQL</dt><dd><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>F</kbd></dd></div>
+          <div><dt>Go to line</dt><dd><kbd>Ctrl</kbd><kbd>G</kbd></dd></div>
+          <div><dt>Move line up or down</dt><dd><kbd>Alt</kbd><kbd>↑</kbd><span class="or">/</span><kbd>Alt</kbd><kbd>↓</kbd></dd></div>
+          <div><dt>Indent or outdent the selection</dt><dd><kbd>Tab</kbd><span class="or">/</span><kbd>Shift</kbd><kbd>Tab</kbd></dd></div>
+          <div><dt>Accept a completion</dt><dd><kbd>Tab</kbd><span class="or">or</span><kbd>Enter</kbd></dd></div>
+          <div><dt>Zoom in, out, reset</dt><dd><kbd>Ctrl</kbd><kbd>=</kbd><span class="or">/</span><kbd>Ctrl</kbd><kbd>-</kbd><span class="or">/</span><kbd>Ctrl</kbd><kbd>0</kbd></dd></div>
+        </dl>
+      </section>
+      <section class="sc-group" aria-labelledby="sc-tabs">
+        <h3 id="sc-tabs">Tabs and files</h3>
+        <dl>
+          <div><dt>New tab</dt><dd><kbd>Ctrl</kbd><kbd>T</kbd></dd></div>
+          <div><dt>Close tab</dt><dd><kbd>Ctrl</kbd><kbd>W</kbd></dd></div>
+          <div><dt>Next or previous tab</dt><dd><kbd>Ctrl</kbd><kbd>Tab</kbd><span class="or">/</span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Tab</kbd></dd></div>
+          <div><dt>Open a file</dt><dd><kbd>Ctrl</kbd><kbd>O</kbd></dd></div>
+          <div><dt>Save, or save as</dt><dd><kbd>Ctrl</kbd><kbd>S</kbd><span class="or">/</span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd></dd></div>
+          <div><dt>Command palette</dt><dd><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd></dd></div>
+          <div><dt>Full screen</dt><dd><kbd>F11</kbd></dd></div>
+          <div><dt>Keyboard shortcuts</dt><dd><kbd>F1</kbd></dd></div>
+        </dl>
+      </section>
+    </div>
+
+    <h3 class="details-head">Small things that add up</h3>
+    <ul class="details">
+      <li><b>NULLs are gray</b> in the grid, so a NULL never looks like the text 'NULL'.</li>
+      <li><b>Copy cells with headers</b> from the grid's right-click menu puts tab-separated rows and their column names on the clipboard.</li>
+      <li><b>CSV exports open cleanly in Excel</b>, accents and Hebrew included, because they're written with a UTF-8 BOM.</li>
+      <li><b>Opens .sql files</b> saved as UTF-8, Windows-1255 (Hebrew) or Windows-1252.</li>
+      <li><b>Format SQL</b> uppercases keywords and re-indents the selection or the whole tab.</li>
+      <li><b>The grid shows the first 2,000 rows</b> of a result and tells you when there are more.</li>
+      <li><b>Bracket matching</b>, a highlighted current line, line numbers and word wrap.</li>
+      <li><b>Editor zoom</b> with <kbd>Ctrl</kbd>+<kbd>=</kbd> and <kbd>Ctrl</kbd>+<kbd>-</kbd>, remembered between sessions.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="install" aria-labelledby="install-title">
+  <div class="wrap split">
+    <div class="section-head">
+      <h2 id="install-title">Install</h2>
+      <p>notepaDB is a regular Python package. pipx installs it into an environment of its own and puts the <code>notepadb</code> command on your PATH.</p>
+      <p class="aside">Installing brings the drivers for all five engines with it. A missing system library only matters when you connect with that engine.</p>
+    </div>
+    <div>
+      <div class="install" data-tabs data-os-tabs>
+        <div class="switcher" role="tablist" aria-label="Operating system">
+          <button type="button" role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true" data-os-tab="linux">Linux</button>
+          <button type="button" role="tab" id="tab-mac" aria-controls="panel-mac" aria-selected="false" tabindex="-1" data-os-tab="mac">macOS</button>
+          <button type="button" role="tab" id="tab-win" aria-controls="panel-win" aria-selected="false" tabindex="-1" data-os-tab="windows">Windows</button>
+          <button type="button" role="tab" id="tab-src" aria-controls="panel-src" aria-selected="false" tabindex="-1">From source</button>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux" tabindex="0">
+          <div class="distros" data-tabs data-distro-tabs>
+            <div class="distro-list" role="tablist" aria-label="Distribution">
+              <button type="button" role="tab" id="d-deb" aria-controls="p-deb" aria-selected="true" data-distro="deb">Debian · Ubuntu · Mint</button>
+              <button type="button" role="tab" id="d-fed" aria-controls="p-fed" aria-selected="false" tabindex="-1" data-distro="fed">Fedora</button>
+              <button type="button" role="tab" id="d-arch" aria-controls="p-arch" aria-selected="false" tabindex="-1" data-distro="arch">Arch</button>
+              <button type="button" role="tab" id="d-suse" aria-controls="p-suse" aria-selected="false" tabindex="-1" data-distro="suse">openSUSE</button>
+            </div>
+            <div class="distro-panel" role="tabpanel" id="p-deb" aria-labelledby="d-deb" tabindex="0">
+              <div class="codebox">
+                <pre class="code"><span class="p">$ </span>sudo apt install pipx python3-tk
+<span class="p">$ </span>pipx ensurepath
+<span class="p">$ </span>pipx install notepadb
+<span class="p">$ </span>notepadb</pre>
+                <button class="copy-inline" type="button" data-copy="sudo apt install pipx python3-tk&#10;pipx ensurepath&#10;pipx install notepadb" aria-label="Copy the Debian and Ubuntu install commands"><svg aria-hidden="true"><use href="#ni-copy"/></svg><span>Copy</span></button>
+              </div>
+            </div>
+            <div class="distro-panel" role="tabpanel" id="p-fed" aria-labelledby="d-fed" tabindex="0" hidden>
+              <div class="codebox">
+                <pre class="code"><span class="p">$ </span>sudo dnf install pipx python3-tkinter
+<span class="p">$ </span>pipx ensurepath
+<span class="p">$ </span>pipx install notepadb
+<span class="p">$ </span>notepadb</pre>
+                <button class="copy-inline" type="button" data-copy="sudo dnf install pipx python3-tkinter&#10;pipx ensurepath&#10;pipx install notepadb" aria-label="Copy the Fedora install commands"><svg aria-hidden="true"><use href="#ni-copy"/></svg><span>Copy</span></button>
+              </div>
+            </div>
+            <div class="distro-panel" role="tabpanel" id="p-arch" aria-labelledby="d-arch" tabindex="0" hidden>
+              <div class="codebox">
+                <pre class="code"><span class="p">$ </span>sudo pacman -S python-pipx tk
+<span class="p">$ </span>pipx ensurepath
+<span class="p">$ </span>pipx install notepadb
+<span class="p">$ </span>notepadb</pre>
+                <button class="copy-inline" type="button" data-copy="sudo pacman -S python-pipx tk&#10;pipx ensurepath&#10;pipx install notepadb" aria-label="Copy the Arch install commands"><svg aria-hidden="true"><use href="#ni-copy"/></svg><span>Copy</span></button>
+              </div>
+            </div>
+            <div class="distro-panel" role="tabpanel" id="p-suse" aria-labelledby="d-suse" tabindex="0" hidden>
+              <div class="codebox">
+                <pre class="code"><span class="p">$ </span>sudo zypper install python3-pipx python3-tk
+<span class="p">$ </span>pipx ensurepath
+<span class="p">$ </span>pipx install notepadb
+<span class="p">$ </span>notepadb</pre>
+                <button class="copy-inline" type="button" data-copy="sudo zypper install python3-pipx python3-tk&#10;pipx ensurepath&#10;pipx install notepadb" aria-label="Copy the openSUSE install commands"><svg aria-hidden="true"><use href="#ni-copy"/></svg><span>Copy</span></button>
+              </div>
+            </div>
+          </div>
+          <p class="note">Why not plain <code>pip install</code>? Debian, Ubuntu, Mint, Arch and openSUSE Tumbleweed mark the system Python as externally managed (PEP 668), so pip outside a virtual environment stops with <code>error: externally-managed-environment</code>. pipx makes that environment for you.</p>
+          <p class="note">Using uv? <code>uv tool install --no-managed-python notepadb</code> runs it on your distribution's Python and Tk, which render fonts better on Linux than uv's own Python builds.</p>
+          <p class="note">On Python 3.15, for example Fedora 45, the SQL Server driver pyodbc has no prebuilt package yet, so install on Python 3.14 with <code>uv tool install --managed-python --python 3.14 notepadb</code>.</p>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-mac" aria-labelledby="tab-mac" tabindex="0" hidden>
+          <div class="codebox">
+            <pre class="code"><span class="p">$ </span>brew install uv
+<span class="p">$ </span>uv tool install --managed-python --python 3.14 notepadb
+<span class="p">$ </span>notepadb</pre>
+            <button class="copy-inline" type="button" data-copy="brew install uv&#10;uv tool install --managed-python --python 3.14 notepadb" aria-label="Copy the macOS install commands"><svg aria-hidden="true"><use href="#ni-copy"/></svg><span>Copy</span></button>
+          </div>
+          <p class="note">uv's own Python 3.14 includes Tk, so there's nothing else to install. It's pinned to 3.14 because Homebrew's Python is now 3.15, and the SQL Server driver pyodbc has no prebuilt package for 3.15 yet. If the <code>notepadb</code> command isn't found, run <code>uv tool update-shell</code> and open a new terminal.</p>
+          <p class="note">On a Mac, notepaDB's menus sit in the menu bar at the top of the screen, like other Mac apps.</p>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-win" aria-labelledby="tab-win" tabindex="0" hidden>
+          <div class="release" data-release>
+            <a class="btn btn-accent" href="https://github.com/DrorMaor/notepadb/releases/latest" data-release-link hidden><svg aria-hidden="true"><use href="#ni-export"/></svg><span data-release-label>Download notepadb.exe</span></a>
+            <span class="rel-meta" data-release-meta hidden></span>
+          </div>
+          <div class="codebox">
+            <pre class="code"><span class="p">&gt; </span>winget install --id=astral-sh.uv -e
+<span class="p">&gt; </span>uv tool install --python 3.14 notepadb
+<span class="p">&gt; </span>notepadb</pre>
+            <button class="copy-inline" type="button" data-copy="winget install --id=astral-sh.uv -e&#10;uv tool install --python 3.14 notepadb" aria-label="Copy the Windows install commands"><svg aria-hidden="true"><use href="#ni-copy"/></svg><span>Copy</span></button>
+          </div>
+          <p class="note">Open a new terminal after installing uv. uv uses your Python 3.14 if you have one, or fetches its own, and both include Tk. Already on Python 3.9 to 3.14 from python.org? <code>py -m pip install notepadb</code> works too, if Python's Scripts folder is on your PATH.</p>
+          <p class="note" data-release-none>A standalone <code>notepadb.exe</code> that needs no Python is built for each tagged release on GitHub. None has been published yet.</p>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-src" aria-labelledby="tab-src" tabindex="0" hidden>
+          <div class="codebox">
+            <pre class="code"><span class="p">$ </span>git clone https://github.com/DrorMaor/notepadb.git
+<span class="p">$ </span>cd notepadb
+<span class="p">$ </span>python3 -m venv .venv &amp;&amp; . .venv/bin/activate
+<span class="p">$ </span>pip install -r requirements.txt
+<span class="p">$ </span>python -m notepadb</pre>
+            <button class="copy-inline" type="button" data-copy="git clone https://github.com/DrorMaor/notepadb.git&#10;cd notepadb&#10;python3 -m venv .venv &amp;&amp; . .venv/bin/activate&#10;pip install -r requirements.txt&#10;python -m notepadb" aria-label="Copy the source install commands"><svg aria-hidden="true"><use href="#ni-copy"/></svg><span>Copy</span></button>
+          </div>
+          <p class="note">SQLite is the easiest engine to try a change against, since it needs no server.</p>
+        </div>
+      </div>
+      <ul class="drivers boxed">
+        <li><b>SQL Server</b><span>Needs Microsoft's ODBC Driver 18 for SQL Server (<code>msodbcsql18</code>). On Linux and macOS it comes from Microsoft's package repository and brings unixODBC with it: see the guides for <a href="https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server">Linux</a> and <a href="https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/install-microsoft-odbc-driver-sql-server-macos">macOS</a>.</span></li>
+        <li><b>Oracle</b><span>Runs in thin mode, so there's no Instant Client to install.</span></li>
+        <li><b>SQLite</b><span>Uses Python's built-in module. Nothing extra.</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section band" id="source" aria-labelledby="source-title">
+  <div class="wrap split">
+    <div class="section-head">
+      <h2 id="source-title">Small enough to read</h2>
+      <p><span data-loc>About 7,300 lines of Python in five modules</span>, built on Tkinter. Settings, history and autosaves are plain files on your computer, and the only connections notepaDB opens are to your databases.</p>
+      <p class="aside">What it isn't: there are no table designers, diagrams, schema compare or admin screens. Keep SSMS, DBeaver or your IDE for those.</p>
+    </div>
+    <div>
+      <figure class="gen-single">
+        <pre class="code"><span class="c"># db_backends.py: a new engine is one subclass</span>
+<span class="k">class</span> MyEngineBackend(DbBackend):
+    label = <span class="s">"My Engine"</span>
+
+    <span class="k">def</span> connect(self, server, database=<span class="k">None</span>, **kwargs): ...
+    <span class="k">def</span> list_databases(self): ...
+    <span class="k">def</span> use_database(self, name): ...
+    <span class="k">def</span> list_schema(self, database=<span class="k">None</span>): ...
+    <span class="k">def</span> execute(self, sql): ...
+
+BACKENDS[<span class="s">"myengine"</span>] = MyEngineBackend</pre>
+      </figure>
+      <div class="oss-actions">
+        <a class="btn btn-accent" href="https://github.com/DrorMaor/notepadb"><svg aria-hidden="true"><use href="#i-github"/></svg>Read the source</a>
+        <a class="btn btn-pill" href="https://github.com/DrorMaor/notepadb/blob/main/CONTRIBUTING.md">Contributing guide</a>
+        <a class="btn btn-pill" href="https://github.com/DrorMaor/notepadb/issues">Report an issue</a>
+      </div>
+      <p class="coffee">notepaDB is a spare-time project by Dror Maor, licensed GPL-2.0. If it saves you time, you can <a href="https://ko-fi.com/drormaor">buy Dror a coffee</a>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="faq" aria-labelledby="faq-title">
+  <div class="wrap split">
+    <div class="section-head">
+      <h2 id="faq-title">Questions</h2>
+      <p>Something else? <a href="https://github.com/DrorMaor/notepadb/issues">Open an issue on GitHub</a>.</p>
+    </div>
+    <div class="faq boxed">
+      <details>
+        <summary><span>Is notepaDB free?</span></summary>
+        <div><p>Yes. It's free and open source under the GPL-2.0 license. If it saves you time, you can <a href="https://ko-fi.com/drormaor">buy the author a coffee</a>.</p></div>
+      </details>
+      <details>
+        <summary><span>Which databases does it work with?</span></summary>
+        <div><p>SQL Server, PostgreSQL, MySQL, MariaDB, Oracle and SQLite. Each tab connects on its own, so you can have several engines open side by side.</p></div>
+      </details>
+      <details>
+        <summary><span>Does it run on Linux?</span></summary>
+        <div><p>Yes. The screenshots on this page are from GNOME 48 on Debian 13. Install it with pipx after adding Tk from your distribution's packages, as shown under Install.</p></div>
+      </details>
+      <details>
+        <summary><span>Why does <code>pip install notepadb</code> fail on Ubuntu or Debian?</span></summary>
+        <div><p>Those distributions protect the system Python (PEP 668), so pip refuses to install into it and prints <code>error: externally-managed-environment</code>. Use <code>pipx install notepadb</code>, which creates a separate environment for the app.</p></div>
+      </details>
+      <details>
+        <summary><span>Which Python versions work?</span></summary>
+        <div><p>Python 3.9 to 3.14, with Tk. On 3.15, the SQL Server driver pyodbc has no prebuilt package yet, so installing would mean compiling it. The install steps above pin 3.14 wherever 3.15 is the default.</p></div>
+      </details>
+      <details>
+        <summary><span>Does it run on macOS and Windows?</span></summary>
+        <div><p>Yes. notepaDB is Python and Tk, and both run on macOS and Windows. It follows the system's light or dark setting there too, and on a Mac the menus move to the menu bar at the top of the screen. Install it with uv as shown above, and please report anything that looks wrong.</p></div>
+      </details>
+      <details>
+        <summary><span>Does it store my passwords?</span></summary>
+        <div><p>No. Saved connections, recent servers and restored sessions keep everything except the password. Tabs that use Windows authentication or SQLite reconnect on their own; the others ask you to connect again.</p></div>
+      </details>
+      <details>
+        <summary><span>Where are my settings and history kept?</span></summary>
+        <div><p>In files on your computer. notepaDB has no telemetry and no account, and it only connects to the databases you choose.</p></div>
+      </details>
+      <details>
+        <summary><span>How many rows does the grid show?</span></summary>
+        <div><p>The first 2,000 rows of each result set. The footer under the grid says how many rows the query returned, so you know when there are more. Export CSV under the grid saves the rows the grid shows; to export a whole table, right-click it in the sidebar and pick Export table to CSV, which writes up to 100,000 rows.</p></div>
+      </details>
+      <details>
+        <summary><span>Is it a replacement for a full database IDE?</span></summary>
+        <div><p>It covers writing and running SQL: autocomplete, results, explain plans and history. It has no table designers, diagrams or admin screens. Keep your IDE for those and open notepaDB for the quick work.</p></div>
+      </details>
+      <details>
+        <summary><span>Is the demo on this page the real app?</span></summary>
+        <div><p>It's a browser copy of the notepaDB window. The autocomplete follows the desktop app's rules, ported to JavaScript, and queries run on SQLite compiled to WebAssembly. The desktop app itself is Python and Tk; the <a href="#screenshots">screenshots</a> show it on GNOME.</p></div>
+      </details>
+      <details>
+        <summary><span>How do I report a bug?</span></summary>
+        <div><p><a href="https://github.com/DrorMaor/notepadb/issues">Open an issue on GitHub</a> with the engine, your OS and Python version, and the steps to reproduce it. Leave out real connection strings, hostnames and credentials.</p></div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="closer" aria-labelledby="closer-title">
+  <div class="wrap">
+    <svg class="closer-mark" aria-hidden="true"><use href="#ni-logo"/></svg>
+    <h2 class="closer-title" id="closer-title">Open it like Notepad.<span class="caret" aria-hidden="true"></span></h2>
+    <p class="closer-sub">Connect, type, press F5. That's the whole workflow.</p>
+    <div class="cta">
+      <div class="cmd">
+        <code><span class="prompt" aria-hidden="true">$</span><span data-cta-cmd>pipx install notepadb</span></code>
+        <button class="btn btn-accent copy-btn" type="button" data-copy="pipx install notepadb" data-cta-copy>
+          <svg aria-hidden="true"><use href="#ni-copy"/></svg><span>Copy</span>
+        </button>
+      </div>
+      <a class="btn btn-pill" href="https://github.com/DrorMaor/notepadb"><svg aria-hidden="true"><use href="#i-github"/></svg>Star on GitHub</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a class="brand" href="/" aria-label="notepaDB home">
+          <svg class="brand-mark" aria-hidden="true"><use href="#ni-logo"/></svg>
+          <span class="wordmark">notepa<b>DB</b></span>
+        </a>
+        <p>A notepad, but only for databases. For Linux, macOS and Windows. Made by Dror Maor.</p>
+      </div>
+      <nav aria-labelledby="f-project">
+        <h2 id="f-project">Project</h2>
+        <ul>
+          <li><a href="https://github.com/DrorMaor/notepadb">GitHub</a></li>
+          <li><a href="https://pypi.org/project/notepadb/">PyPI</a></li>
+          <li><a href="https://github.com/DrorMaor/notepadb/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/DrorMaor/notepadb/blob/main/LICENSE">License (GPL-2.0)</a></li>
+        </ul>
+      </nav>
+      <nav aria-labelledby="f-help">
+        <h2 id="f-help">Help</h2>
+        <ul>
+          <li><a href="#install">Install</a></li>
+          <li><a href="#faq">FAQ</a></li>
+          <li><a href="https://github.com/DrorMaor/notepadb/issues">Issues</a></li>
+          <li><a href="https://github.com/DrorMaor/notepadb/blob/main/CONTRIBUTING.md">Contributing</a></li>
+        </ul>
+      </nav>
+      <nav aria-labelledby="f-support">
+        <h2 id="f-support">Support</h2>
+        <ul>
+          <li><a href="https://ko-fi.com/drormaor">Buy me a coffee</a></li>
+          <li><a href="https://github.com/DrorMaor/notepadb">Star on GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 Dror Maor. Released under GPL-2.0-only.</span>
+      <span>Set in Adwaita Sans and Adwaita Mono. Press <kbd>/</kbd> to jump anywhere.</span>
+    </div>
+  </div>
+</footer>
+
+<dialog class="palette" id="palette" aria-labelledby="palette-label">
+  <form method="dialog" class="palette-box">
+    <label class="sr-only" id="palette-label" for="palette-input">Jump to a section or run a command</label>
+    <div class="palette-field">
+      <svg aria-hidden="true"><use href="#ni-terminal"/></svg>
+      <input id="palette-input" type="text" autocomplete="off" spellcheck="false" placeholder="Jump to a section or run a command…" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list">
+      <kbd>Esc</kbd>
+    </div>
+    <ul class="palette-list" id="palette-list" role="listbox" aria-label="Results"></ul>
+    <p class="palette-hint" aria-hidden="true">↑↓ to navigate · Enter to run · Esc to close</p>
+  </form>
+</dialog>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>
