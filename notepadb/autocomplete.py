@@ -50,8 +50,12 @@ def build_alias_map(full_text: str, schema: dict) -> dict:
         bare = key.split(".")[-1].lower()
         bare_name_lookup.setdefault(bare, []).append(key)
 
+    # A FROM/JOIN clause ends at the next clause keyword, a newline, a
+    # semicolon, or the end of the text — so "FROM teams t" on a line of its
+    # own (or followed by "LEFT JOIN") still registers the alias "t".
     for clause_match in re.finditer(
-        r"(FROM|JOIN)\s+([^\n;]+?)(?=\bFROM\b|\bJOIN\b|\bWHERE\b|\bGROUP\b|\bORDER\b|\bON\b|$)",
+        r"(FROM|JOIN)\s+([^\n;]+?)"
+        r"(?=\b(?:FROM|JOIN|WHERE|GROUP|ORDER|ON|LEFT|RIGHT|INNER|FULL|OUTER|CROSS|HAVING|LIMIT|UNION)\b|[\n;]|$)",
         full_text, re.IGNORECASE,
     ):
         clause = clause_match.group(2)
@@ -101,7 +105,9 @@ def get_suggestions(full_text: str, cursor_index: int, schema: dict):
         suggestions = _rank(cols, col_prefix) if col_prefix else sorted(cols, key=str.lower)
         return cursor_index - len(col_prefix), col_prefix, suggestions
 
-    if _TABLE_CONTEXT_RE.search(before):
+    # Test the table context against the text *before* the partial word, so
+    # table suggestions don't vanish as soon as you've typed "FROM te".
+    if _TABLE_CONTEXT_RE.search(before[:prefix_start]):
         bare_names = sorted({k.split(".")[-1] for k in schema})
         full_names = sorted(schema.keys())
         pool = full_names + bare_names

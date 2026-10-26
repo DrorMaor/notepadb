@@ -21,10 +21,14 @@ connection, schema browser, and results grid.
 - **Results grid** with per-cell coloring (e.g. gray NULLs), CSV export, and a
   schema-browser right-click menu (select top 1000 rows, script `CREATE TABLE`,
   copy column list, export table to CSV).
-- **Query tools**: run (F5), cancel, explain plan, SQL formatting, and searchable
-  query history.
-- **Editor basics**: find/replace, line numbers, word wrap, dark mode, and
-  session restore across restarts.
+- **Query tools**: run (`F5`, or `Ctrl+Enter` for just the statement at the
+  caret), cancel, explain plan, SQL formatting, and searchable query history.
+- **Editor basics**: inline find/replace, line numbers, word wrap, toggle
+  comment, move lines, zoom, and session restore across restarts.
+- **A native-feeling UI**: light and dark themes that follow the desktop (or
+  your choice), the desktop's own fonts, HiDPI-aware, a command palette
+  (`Ctrl+Shift+P`) over every command and table, and `F1` for the full list of
+  keyboard shortcuts.
 
 ## Installation
 
@@ -55,8 +59,10 @@ startup.
 
 ## Usage
 
-Open a tab, pick **Connection → Connect...** (`Ctrl+K`), choose your engine,
-and start typing SQL. Run with `F5`.
+Open a tab, pick **Connection → Connect…** (`Ctrl+K`), choose your engine,
+and start typing SQL. Run with `F5` (everything, or the selection) or
+`Ctrl+Enter` (the statement at the caret). `Ctrl+Shift+P` opens the command
+palette and `F1` lists every shortcut.
 
 ## Supported databases
 
