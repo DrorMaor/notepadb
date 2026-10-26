@@ -1,21 +1,30 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "notepadb"
-version = "0.1.0"
-description = "A notepad/scratchpad, but only for databases — SQL with schema-aware autocomplete across SQL Server, PostgreSQL, MySQL/MariaDB, Oracle, and SQLite."
+dynamic = ["version"]
+description = "A notepad, but only for databases — SQL with schema-aware autocomplete for SQL Server, PostgreSQL, MySQL/MariaDB, Oracle and SQLite."
 readme = "README.md"
 license = "GPL-2.0-only"
+license-files = ["LICENSE"]
 authors = [{ name = "Dror Maor" }]
 requires-python = ">=3.9"
+keywords = [
+    "sql", "database", "scratchpad", "notepad", "autocomplete", "query-editor",
+    "sql-server", "postgresql", "mysql", "mariadb", "oracle", "sqlite", "tkinter",
+]
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
     "Environment :: Win32 (MS Windows)",
     "Environment :: X11 Applications",
+    "Environment :: MacOS X",
     "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Database",
     "Topic :: Database :: Front-Ends",
 ]
@@ -30,12 +39,18 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/DrorMaor/notepadb"
+Homepage = "https://notepadb.com"
+Source = "https://github.com/DrorMaor/notepadb"
 Issues = "https://github.com/DrorMaor/notepadb/issues"
 Changelog = "https://github.com/DrorMaor/notepadb/blob/main/CHANGELOG.md"
+Funding = "https://ko-fi.com/drormaor"
 
 [project.gui-scripts]
 notepadb = "notepadb.app:main"
 
-[tool.setuptools.packages.find]
-include = ["notepadb*"]
+[tool.setuptools]
+packages = ["notepadb"]
+
+[tool.setuptools.dynamic]
+# Single source of truth for the version: notepadb/app.py
+version = { attr = "notepadb.app.__version__" }
