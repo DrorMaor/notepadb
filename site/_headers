@@ -1,0 +1,23 @@
+# Netlify response headers for notepadb.com
+#
+# The CSP leaves scripts and styles unrestricted on purpose: on Netlify's free
+# plan, Netlify injects its "Powered by Netlify" badge into every page as an
+# iframe built from inline <style> and <script>, and that iframe inherits this
+# policy. A script-src/style-src policy would break the badge.
+
+/*
+  Content-Security-Policy: base-uri 'self'; object-src 'none'; form-action 'none'; frame-ancestors 'none'
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+
+/assets/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/img/*
+  Cache-Control: public, max-age=31536000, immutable
