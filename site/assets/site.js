@@ -1,4 +1,4 @@
-/* notepadb.com: theme, OS-aware install, tabs, palette, and live version/release info. */
+/* notepadb.com: theme, OS-aware install, tabs, toasts, palette, screenshot compare, live version. */
 (() => {
   "use strict";
 
@@ -6,13 +6,15 @@
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const OS = root.dataset.os || "other";
 
-  /* ---------- theme ---------- */
+  /* ---------- theme: follow system, light or dark ---------- */
 
   const THEME_KEY = "notepadb-theme";
   const systemDark = matchMedia("(prefers-color-scheme: dark)");
   const toggleBtn = document.getElementById("theme-toggle");
   const themeMetas = [...document.querySelectorAll('meta[name="theme-color"]')];
+  const META = { light: "#ffffff", dark: "#2e2e32" };
 
+  const mode = () => root.getAttribute("data-theme") || "system";
   const isDark = () => {
     const t = root.getAttribute("data-theme");
     return t ? t === "dark" : systemDark.matches;
@@ -20,42 +22,63 @@
 
   function syncTheme() {
     const dark = isDark();
-    if (toggleBtn) {
-      toggleBtn.dataset.dark = String(dark);
-      toggleBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+    if (toggleBtn) toggleBtn.setAttribute("aria-label", dark ? "Switch to the light theme" : "Switch to the dark theme");
+    for (const m of themeMetas) {
+      const media = m.getAttribute("media") || "";
+      const forced = root.getAttribute("data-theme");
+      m.setAttribute("content", forced ? META[forced] : /dark/.test(media) ? META.dark : META.light);
     }
-    if (root.hasAttribute("data-theme")) {
-      for (const m of themeMetas) m.setAttribute("content", dark ? "#0d1016" : "#ffffff");
-    }
+    document.dispatchEvent(new CustomEvent("theme:change", { detail: { dark, mode: mode() } }));
   }
 
-  function applyTheme(next) {
-    root.setAttribute("data-theme", next);
+  function applyMode(next) {
+    if (next === "system") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", next);
     try {
-      localStorage.setItem(THEME_KEY, next);
+      if (next === "system") localStorage.removeItem(THEME_KEY);
+      else localStorage.setItem(THEME_KEY, next);
     } catch (_) {
       /* private mode: the choice lasts for this page view */
     }
     syncTheme();
   }
 
-  // The new theme grows out of the toggle button as a circle.
-  function toggleTheme() {
-    const next = isDark() ? "light" : "dark";
-    if (reduceMotion || !document.startViewTransition) return applyTheme(next);
-    const r = toggleBtn ? toggleBtn.getBoundingClientRect() : null;
+  // The new theme grows out of the button that asked for it, as a circle.
+  function transitionTo(next, origin) {
+    const before = isDark();
+    const willBeDark = next === "system" ? systemDark.matches : next === "dark";
+    if (reduceMotion || !document.startViewTransition || before === willBeDark) return applyMode(next);
+    const r = origin && origin.getBoundingClientRect ? origin.getBoundingClientRect() : null;
     const x = r && r.width ? r.left + r.width / 2 : innerWidth / 2;
     const y = r && r.width ? r.top + r.height / 2 : 0;
     root.style.setProperty("--vt-x", `${x}px`);
     root.style.setProperty("--vt-y", `${y}px`);
     root.style.setProperty("--vt-r", `${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px`);
-    document.startViewTransition(() => applyTheme(next));
+    document.startViewTransition(() => applyMode(next));
   }
+  const toggleTheme = (origin) => transitionTo(isDark() ? "light" : "dark", origin && origin.nodeType === 1 ? origin : toggleBtn);
 
-  if (toggleBtn) toggleBtn.addEventListener("click", toggleTheme);
+  if (toggleBtn) toggleBtn.addEventListener("click", () => toggleTheme(toggleBtn));
   if (systemDark.addEventListener) systemDark.addEventListener("change", syncTheme);
-  window.notepadbTheme = { isDark, toggle: toggleTheme };
+  window.notepadbTheme = { isDark, mode, toggle: toggleTheme, set: (m) => transitionTo(m, null) };
   syncTheme();
+
+  /* ---------- toasts ---------- */
+
+  const toastHost = document.getElementById("toasts");
+  let toastTimer = 0;
+  function toast(message) {
+    if (!toastHost) return;
+    const t = document.createElement("div");
+    t.className = "toast";
+    t.textContent = message;
+    toastHost.replaceChildren(t);
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      t.classList.add("is-leaving");
+      setTimeout(() => t.remove(), 200);
+    }, 2400);
+  }
 
   /* ---------- install command for the visitor's OS ---------- */
 
@@ -66,11 +89,6 @@
   for (const n of document.querySelectorAll("[data-cta-copy]")) n.setAttribute("data-copy", cta.cmd);
 
   /* ---------- copy buttons ---------- */
-
-  const live = document.createElement("div");
-  live.className = "sr-only";
-  live.setAttribute("aria-live", "polite");
-  document.body.appendChild(live);
 
   function legacyCopy(text) {
     const ta = document.createElement("textarea");
@@ -101,19 +119,20 @@
   document.addEventListener("click", async (e) => {
     const btn = e.target.closest("[data-copy]");
     if (!btn) return;
-    const ok = await copyText(btn.getAttribute("data-copy"));
+    const text = btn.getAttribute("data-copy");
+    const ok = await copyText(text);
     const label = btn.querySelector("span");
     if (label) {
       if (!btn.dataset.label) btn.dataset.label = label.textContent;
       label.textContent = ok ? "Copied" : "Press Ctrl+C";
-      btn.dataset.copied = String(ok);
+      btn.classList.toggle("is-done", ok);
       clearTimeout(btn.copyTimer);
       btn.copyTimer = setTimeout(() => {
         label.textContent = btn.dataset.label;
-        btn.dataset.copied = "false";
+        btn.classList.remove("is-done");
       }, 1800);
     }
-    live.textContent = ok ? "Copied to clipboard" : "Couldn't copy. Select the text and press Ctrl+C.";
+    toast(ok ? (text.includes("\n") ? "Commands copied" : "Copied to clipboard") : "Couldn't copy. Select the text and press Ctrl+C.");
   });
 
   /* ---------- tabs ---------- */
@@ -145,18 +164,31 @@
     });
   }
 
-  // Open the install steps for the visitor's OS.
+  // Open the install steps for the visitor's OS, and their distribution
+  // when the browser says which one it is (Firefox builds from distributions do).
   const osTab = document.querySelector(`[data-os-tab="${OS === "ios" ? "mac" : OS === "android" ? "linux" : OS}"]`);
   if (osTab) osTab.closest("[data-tabs]").selectTab(osTab, false);
+  const distroTab = root.dataset.distro && document.querySelector(`[data-distro-tabs] [data-distro="${root.dataset.distro}"]`);
+  if (distroTab) distroTab.closest("[data-tabs]").selectTab(distroTab, false);
+
+  /* ---------- light/dark screenshot compare ---------- */
+
+  const range = document.getElementById("compare-range");
+  if (range) {
+    const frame = range.closest(".compare-frame");
+    const set = () => frame.style.setProperty("--pos", `${range.value}%`);
+    range.addEventListener("input", set);
+    set();
+  }
 
   /* ---------- 404 page ---------- */
 
   for (const node of document.querySelectorAll("[data-404-path]")) node.textContent = location.pathname;
   for (const node of document.querySelectorAll("[data-now]")) node.textContent = new Date().toTimeString().slice(0, 8);
 
-  /* ---------- feature vignettes: move the highlight while on screen ---------- */
+  /* ---------- reveal on scroll, and the feature vignettes ---------- */
 
-  for (const el of document.querySelectorAll(".step, .feature, .shot, .stat")) el.classList.add("reveal");
+  for (const el of document.querySelectorAll(".step, .feature, .sc-group")) el.classList.add("reveal");
 
   if (!reduceMotion && "IntersectionObserver" in window) {
     const advance = (vig) => {
@@ -182,7 +214,7 @@
     for (const vig of document.querySelectorAll(".vig")) if (vig.querySelector("[data-cycle]")) io.observe(vig);
   }
 
-  /* ---------- command palette ---------- */
+  /* ---------- the site's own command palette: press / ---------- */
 
   const palette = document.getElementById("palette");
   const pInput = document.getElementById("palette-input");
@@ -197,27 +229,34 @@
       history.replaceState(null, "", hash);
     };
     const open = (url) => window.open(url, "_blank", "noopener");
+    const inDemo = (fn) => () => {
+      go("#demo");
+      if (demo()) fn(demo());
+    };
     const ITEMS = [
       ["Jump to", "Live demo", "", () => go("#demo")],
-      ["Jump to", "How it works", "", () => go("#how")],
-      ["Jump to", "Engines", "", () => go("#engines")],
+      ["Jump to", "Three keys from question to answer", "", () => go("#how")],
+      ["Jump to", "Screenshots of the real app", "", () => go("#screenshots")],
       ["Jump to", "Features", "", () => go("#features")],
+      ["Jump to", "At home on a Linux desktop", "", () => go("#linux")],
+      ["Jump to", "Engines", "", () => go("#engines")],
       ["Jump to", "Coming from SSMS", "", () => go("#ssms")],
-      ["Jump to", "The real app on Linux", "", () => go("#linux")],
       ["Jump to", "Keyboard shortcuts", "", () => go("#keyboard")],
       ["Jump to", "Install", "", () => go("#install")],
       ["Jump to", "Source code", "", () => go("#source")],
       ["Jump to", "Questions", "", () => go("#faq")],
       ["Do", "Copy the install command", () => cta.cmd, async () => {
         const ok = await copyText(cta.cmd);
-        live.textContent = ok ? `Copied ${cta.cmd}` : "Couldn't copy";
+        toast(ok ? "Copied to clipboard" : "Couldn't copy");
       }],
-      ["Do", () => (isDark() ? "Switch to the light theme" : "Switch to the dark theme"), "", () => toggleTheme()],
-      ["Do", "Replay the demo", "", () => { go("#demo"); if (demo()) demo().replay(); }],
-      ["Do", "Run SELECT * FROM games in the demo", "", () => { go("#demo"); if (demo()) demo().run("SELECT * FROM games;"); }],
-      ["Do", "Show the demo window as Windows", "", () => { go("#demo"); if (demo()) demo().setOS("windows"); }],
-      ["Do", "Show the demo window as macOS", "", () => { go("#demo"); if (demo()) demo().setOS("mac"); }],
-      ["Do", "Show the demo window as Linux", "", () => { go("#demo"); if (demo()) demo().setOS("linux"); }],
+      ["Do", () => (isDark() ? "Switch to the light theme" : "Switch to the dark theme"), "", () => toggleTheme(toggleBtn)],
+      ["Do", "Replay the demo", "", inDemo((d) => d.replay())],
+      ["Do", "Run SELECT * FROM games in the demo", "", inDemo((d) => d.run("SELECT * FROM games;"))],
+      ["Do", "Open the demo's command palette", "Ctrl+Shift+P", inDemo((d) => d.openPalette())],
+      ["Do", "Show the demo's keyboard shortcuts", "F1", inDemo((d) => d.showShortcuts())],
+      ["Do", "Show the demo window as GNOME", "", inDemo((d) => d.setOS("linux"))],
+      ["Do", "Show the demo window as Windows", "", inDemo((d) => d.setOS("windows"))],
+      ["Do", "Show the demo window as macOS", "", inDemo((d) => d.setOS("mac"))],
       ["Open", "GitHub repository", "github.com", () => open("https://github.com/DrorMaor/notepadb")],
       ["Open", "PyPI page", "pypi.org", () => open("https://pypi.org/project/notepadb/")],
       ["Open", "Report an issue", "github.com", () => open("https://github.com/DrorMaor/notepadb/issues")],
@@ -263,8 +302,7 @@
         li.appendChild(l);
         const h = text(hint);
         if (h) {
-          const s = document.createElement("span");
-          s.className = "hint";
+          const s = document.createElement("em");
           s.textContent = h;
           li.appendChild(s);
         }
@@ -334,11 +372,11 @@
     const typing = (el) => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
     document.addEventListener("keydown", (e) => {
       if (palette.open || e.defaultPrevented) return;
-      const inDemo = e.target.closest && e.target.closest("#np-shell");
+      const inDemoWindow = e.target.closest && e.target.closest("#np-shell");
       if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e.target)) {
         e.preventDefault();
         openPalette();
-      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "k" || e.key === "K") && !inDemo) {
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "k" || e.key === "K") && !inDemoWindow) {
         e.preventDefault();
         openPalette();
       }
@@ -409,12 +447,6 @@
   function showRelease(rel) {
     if (!rel || !/^https:\/\/github\.com\//.test(rel.url)) return;
     const size = `${(rel.size / 1048576).toFixed(1)} MB`;
-    const hero = document.querySelector("[data-win-download]");
-    if (hero && (OS === "windows" || OS === "other")) {
-      hero.href = rel.url;
-      hero.title = `${rel.name}, ${rel.tag}, ${size}`;
-      hero.hidden = false;
-    }
     for (const none of document.querySelectorAll("[data-release-none]")) none.hidden = true;
     const link = document.querySelector("[data-release-link]");
     const meta = document.querySelector("[data-release-meta]");
@@ -439,12 +471,12 @@
   };
   const lookUp = () => {
     pypiVersion().then(showVersion, () => {});
-    if (OS === "windows" || OS === "other") checkRelease();
+    if (OS === "windows") checkRelease();
   };
   document.addEventListener("tabs:change", (e) => {
     if (e.detail && e.detail.tab && e.detail.tab.dataset.osTab === "windows") checkRelease();
   });
-  if (document.querySelector("[data-pypi-version], [data-win-download]")) {
+  if (document.querySelector("[data-pypi-version]")) {
     if ("requestIdleCallback" in window) requestIdleCallback(lookUp, { timeout: 3000 });
     else setTimeout(lookUp, 1200);
   }
